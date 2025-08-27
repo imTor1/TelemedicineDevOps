@@ -21,6 +21,10 @@ import jwt from "jsonwebtoken";
 import mysql from "mysql2/promise";
 import Redis from "ioredis";
 import swaggerUi from "swagger-ui-express";
+import fs from "fs";
+import path from "path";
+import multer from "multer";
+import { fileURLToPath } from "url";
 
 
 ///////////////////////////////
@@ -34,7 +38,7 @@ const env = {
   DB_PASSWORD: process.env.DB_PASSWORD || "1234",
   DB_NAME: process.env.DB_NAME || "telemedicinedb",
   JWT_SECRET: process.env.JWT_SECRET || "change-me-very-secret",
-  REDIS_URL: process.env.REDIS_URL || "",      // optional
+  REDIS_URL: process.env.REDIS_URL || "",
 };
 
 ///////////////////////////////
@@ -56,7 +60,15 @@ const pool = mysql.createPool({
 const app = express();
 app.set("trust proxy", false); // ปิดใน dev/ทดสอบ (ป้องกัน warning ของ express-rate-limit)
 app.use(express.json());
-app.use(helmet());
+app.use(
+  helmet({
+    // อนุญาตให้ resource (ภาพใน /uploads) ถูกฝังข้าม origin
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+
+    // ถ้าเปิดใช้งาน COEP ที่เข้มงวด อาจต้องปิดหรือปรับด้วย:
+    crossOriginEmbedderPolicy: false,
+  })
+);
 app.use(
   cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "PATCH"] })
 );
@@ -99,6 +111,56 @@ const loginLimiter = rateLimit({
 //   console.log("[CLIENT IP]", req.ip, "xff:", req.headers["x-forwarded-for"]);
 //   next();
 // });
+
+// --------------------------- UPLOADS CONFIG ---------------------------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const UPLOAD_DIR = path.resolve(__dirname, "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// ก่อน app.use("/uploads", express.static(UPLOAD_DIR));
+app.use("/uploads", (req, res, next) => {
+  // Allow fetch/embed from any origin
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  next();
+}, express.static(UPLOAD_DIR));
+
+
+// จำกัดไฟล์ภาพเท่านั้น
+const fileFilter = (_req, file, cb) => {
+  const allowed = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+  if (allowed.includes(file.mimetype)) return cb(null, true);
+  cb(new Error("ชนิดไฟล์ไม่รองรับ"));
+};
+
+// ชื่อไฟล์ใหม่แบบแฮชกันชน
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const ts = Date.now().toString();
+    const rnd = crypto.randomBytes(16).toString("hex");
+    const hash = crypto.createHash("md5").update(`${ts}-${rnd}-${file.originalname || ""}`).digest("hex");
+    cb(null, `${ts}_${hash}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+});
+
+// ลบไฟล์เก่าอย่างปลอดภัย
+function deleteFileSafe(publicPath) {
+  try {
+    if (!publicPath || !publicPath.startsWith("/uploads/")) return;
+    const full = path.join(UPLOAD_DIR, publicPath.replace("/uploads/", ""));
+    if (full.startsWith(UPLOAD_DIR) && fs.existsSync(full)) fs.unlinkSync(full);
+  } catch {}
+}
 
 ///////////////////////////////
 // 5) REDIS & IP-BLOCK HELPERS
@@ -320,26 +382,31 @@ function verifyJwt(token) {
 // 8) BUSINESS / DB FUNCTIONS
 //    (Prepared statements only)
 ///////////////////////////////
-export async function registerUser({ role, full_name, email, phone, password, specialties }) {
+export async function registerUser({ role, full_name, email, phone, password, specialties, userpicPath }) {
   const id = genId(role === "doctor" ? "doctor" : "patient");
   const password_hash = hashPassword(password);
-  const sql =
-    "INSERT INTO users (id, role, full_name, email, phone, password_hash) VALUES (?, ?, ?, ?, ?, ?)";
-  try {
-    // insert user
-    await pool.query(sql, [id, role, full_name, email, phone || null, password_hash]);
 
-    // ถ้าเป็น doctor และมี specialties ให้ insert ลง doctor_specialties
+  const sql =
+    "INSERT INTO users (id, role, full_name, email, phone, password_hash, userpic) VALUES (?, ?, ?, ?, ?, ?, ?)";
+
+  try {
+    await pool.query(sql, [id, role, full_name, email, phone || null, password_hash, userpicPath || null]);
+
     if (role === "doctor" && Array.isArray(specialties) && specialties.length) {
-      // จะทำ bulk insert รูปแบบ [(doctor_id, spec_id), ...]
       const values = specialties.map((sid) => [id, sid]);
-      // ป้องกันกรณี duplicate: ใช้ INSERT IGNORE เพื่อไม่ให้โยน error ถ้า mapping มีอยู่แล้ว
-      // แต่ mysql2 .query รองรับ ? แบบ array-of-arrays
       const insertSql = "INSERT IGNORE INTO doctor_specialties (doctor_id, specialty_id) VALUES ?";
       await pool.query(insertSql, [values]);
     }
 
-    return { id, role, full_name, email, phone: phone || null, specialties: specialties || [] };
+    return {
+      id,
+      role,
+      full_name,
+      email,
+      phone: phone || null,
+      userpic: userpicPath || null,
+      specialties: specialties || [],
+    };
   } catch (err) {
     if (err?.code === "ER_DUP_ENTRY") {
       const e = new Error("อีเมลหรือเบอร์โทรนี้ถูกใช้ไปแล้ว");
@@ -350,6 +417,7 @@ export async function registerUser({ role, full_name, email, phone, password, sp
     throw err;
   }
 }
+
 
 export async function listAllSpecialties() {
   const [rows] = await pool.query(
@@ -478,7 +546,7 @@ export async function loginUser(email, password) {
 
 export async function getUserProfile(userId) {
   const [rows] = await pool.query(
-    "SELECT id, role, full_name, email, phone, created_at, updated_at FROM users WHERE id = ? LIMIT 1",
+    "SELECT id, role, full_name, email, phone, userpic, created_at, updated_at FROM users WHERE id = ? LIMIT 1",
     [userId]
   );
   if (!rows[0]) {
@@ -490,7 +558,9 @@ export async function getUserProfile(userId) {
   return rows[0];
 }
 
+
 export async function updateUserProfile(userId, patch) {
+  // patch อาจมี: full_name, phone, specialty_ids, userpicPath
   const fields = [];
   const params = [];
 
@@ -501,6 +571,17 @@ export async function updateUserProfile(userId, patch) {
   if (typeof patch.phone !== "undefined") {
     fields.push("phone = ?");
     params.push(patch.phone || null);
+  }
+
+  // จัดการรูปโปรไฟล์
+  let oldPic = null;
+  if (typeof patch.userpicPath !== "undefined") {
+    // ดึงรูปเก่า
+    const [urows] = await pool.query("SELECT userpic FROM users WHERE id = ? LIMIT 1", [userId]);
+    oldPic = urows[0]?.userpic || null;
+
+    fields.push("userpic = ?");
+    params.push(patch.userpicPath || null);
   }
 
   // อัปเดตข้อมูลพื้นฐานก่อน (ถ้ามี)
@@ -518,17 +599,34 @@ export async function updateUserProfile(userId, patch) {
     }
   }
 
-  // ถ้ามี specialty_ids ให้จัดการ mapping เฉพาะเมื่อเป็นหมอ
+  // specialties (เฉพาะหมอ)
   if (Array.isArray(patch.specialty_ids)) {
     await setDoctorSpecialties(userId, patch.specialty_ids);
   }
 
-  return getUserProfile(userId);
+  // ลบไฟล์เก่าหลังอัปเดตรูปใหม่เรียบร้อย
+  if (typeof patch.userpicPath !== "undefined" && oldPic && oldPic !== patch.userpicPath) {
+    deleteFileSafe(oldPic);
+  }
+
+  // คืนโปรไฟล์ล่าสุด
+  const [rows] = await pool.query(
+    "SELECT id, role, full_name, email, phone, userpic, created_at, updated_at FROM users WHERE id = ? LIMIT 1",
+    [userId]
+  );
+  if (!rows[0]) {
+    const e = new Error("ไม่พบผู้ใช้");
+    e.statusCode = 404; e.code = "NOT_FOUND";
+    throw e;
+  }
+  return rows[0];
 }
 
+// 1) searchDoctors - คืน userpic ด้วย (เพื่อให้ UI แสดงรูปได้)
 export async function searchDoctors({ q, specialty_id, specialty_name }) {
   const params = [];
-  let sql = "SELECT u.id, u.full_name, u.email, u.phone FROM users u ";
+  // include userpic field
+  let sql = "SELECT u.id, u.full_name, u.email, u.phone, u.userpic FROM users u ";
   if (specialty_id || specialty_name) {
     sql +=
       "JOIN doctor_specialties ds ON ds.doctor_id = u.id JOIN specialties s ON s.id = ds.specialty_id ";
@@ -549,6 +647,7 @@ export async function searchDoctors({ q, specialty_id, specialty_name }) {
   const [rows] = await pool.query(sql, params);
   return rows;
 }
+
 
 export async function createDoctorSlot(doctorId, startISO, endISO) {
   const conn = await pool.getConnection();
@@ -593,12 +692,20 @@ export async function createDoctorSlot(doctorId, startISO, endISO) {
   }
 }
 
-
+// 2) listDoctorSlot - สร้าง daily virtual slots และพิจารณา appointment.status (pending/confirmed)
+//    รวมทั้ง auto-close slot ที่จบไปแล้ว (defensive)
 export async function listDoctorSlot(doctorId, fromISO, toISO) {
   // แปลงกรอบวัน
   const toYMD = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : new Date(s).toISOString().slice(0, 10);
   const fromDay = fromISO ? toYMD(fromISO) : null;
   const toDay   = toISO   ? toYMD(toISO)   : null;
+
+  // --- Optional: ปิด (closed) slot เก่าที่ผ่านไปแล้ว (ทำครั้งเดียวเมื่อเรียก)
+  try {
+    await pool.query("UPDATE doctor_slots SET status = 'closed', updated_at = CURRENT_TIMESTAMP WHERE DATE(end_time) < CURDATE() AND status <> 'closed'");
+  } catch (e) {
+    console.error("failed to auto-close old slots:", e?.message || e);
+  }
 
   // ดึง parent slots ที่ทับซ้อนกับกรอบที่ค้นหา
   const params = [doctorId];
@@ -616,6 +723,7 @@ export async function listDoctorSlot(doctorId, fromISO, toISO) {
   if (!rows.length) return [];
 
   // ดึง appointments ในกรอบเดียวกัน เพื่อเช็ค “วันไหนถูกจองแล้ว”
+  // **NOTE**: นับเป็น "reserved" ก็ต่อเมื่อ appointment.status เป็น pending หรือ confirmed
   const aParams = [doctorId];
   let aSql = `
     SELECT a.slot_id, a.chosen_date, a.status
@@ -626,27 +734,52 @@ export async function listDoctorSlot(doctorId, fromISO, toISO) {
   if (toDay)   { aSql += " AND a.chosen_date <= ?"; aParams.push(toDay); }
 
   const [apts] = await pool.query(aSql, aParams);
-  const booked = new Map(); // key = slot_id|YYYY-MM-DD -> true
+  const reserved = new Map(); // key = slot_id|YYYY-MM-DD -> true
   for (const a of apts) {
-    booked.set(`${a.slot_id}|${a.chosen_date}`, true);
+    const st = String(a.status || "").toLowerCase();
+    if (st === "pending" || st === "confirmed") {
+      reserved.set(`${a.slot_id}|${a.chosen_date}`, true);
+    }
   }
 
   // แตกเป็น daily “เสมือน” แล้วติดสถานะ
   const out = [];
+  const todayYMD = new Date().toISOString().slice(0, 10);
   for (const s of rows) {
     const days = enumerateDailyFromSlot(s.start_time, s.end_time);
     for (const ymd of days) {
       if (fromDay && ymd < fromDay) continue;
       if (toDay && ymd > toDay) continue;
-      const isBooked = booked.get(`${s.id}|${ymd}`) === true;
+
+      // ถ้าวันนั้นเลยแล้ว ให้เป็น closed (defensive)
+      if (ymd < todayYMD) {
+        out.push({
+          id: `${s.id}:${ymd}`,
+          slot_id: s.id,
+          doctor_id: s.doctor_id,
+          start_time: `${ymd} 00:00:00`,
+          end_time: `${ymd} 23:59:59`,
+          status: "closed",
+        });
+        continue;
+      }
+
+      const hasReservedAppt = reserved.get(`${s.id}|${ymd}`) === true;
+      const parentStatus = (s.status || "").toLowerCase();
+      // parentMarkedBooked = parent status not 'available' and not 'closed'
+      const parentMarkedBooked = parentStatus && parentStatus !== "available" && parentStatus !== "closed";
+
+      let finalStatus = "available";
+      if (hasReservedAppt || parentMarkedBooked) finalStatus = "booked";
+      // note: if parentStatus === 'closed' we'd already returned closed above on date check
+
       out.push({
-        // id เสมือน เพื่อโชว์ใน UI เท่านั้น
         id: `${s.id}:${ymd}`,
         slot_id: s.id,
         doctor_id: s.doctor_id,
         start_time: `${ymd} 00:00:00`,
         end_time: `${ymd} 23:59:59`,
-        status: isBooked ? "booked" : "available",
+        status: finalStatus,
       });
     }
   }
@@ -656,6 +789,7 @@ export async function listDoctorSlot(doctorId, fromISO, toISO) {
   return out;
 }
 
+// 3) bookAppointment - ใส่นัด (pending) และอัพเดต parent slot -> 'booked' ภายใน transaction เดียวกัน
 export async function bookAppointment(patientId, slotId, chosenDate /* YYYY-MM-DD */) {
   const conn = await pool.getConnection();
   try {
@@ -695,11 +829,29 @@ export async function bookAppointment(patientId, slotId, chosenDate /* YYYY-MM-D
       throw e;
     }
 
-    // 4) ใส่นัด (pending) พึ่งพา UNIQUE(slot_id, chosen_date) กันชน
+    // 3.1) ห้ามผู้ป่วยคนเดียวกันมี appointment ที่ same chosen_date (กับใครก็ได้)
+    const [existingByPatient] = await conn.query(
+      "SELECT 1 FROM appointments WHERE patient_id = ? AND chosen_date = ? LIMIT 1",
+      [patientId, chosenDate]
+    );
+    if (existingByPatient.length) {
+      const e = new Error("คุณมีการจองในวันที่เลือกไว้แล้ว");
+      e.statusCode = 409; e.code = "PATIENT_ALREADY_BOOKED_ON_DATE";
+      throw e;
+    }
+
+    // 4) ใส่นัด (pending)
     const apptId = genId("appt");
     await conn.query(
       "INSERT INTO appointments (id, patient_id, doctor_id, slot_id, chosen_date, status) VALUES (?, ?, ?, ?, ?, 'pending')",
       [apptId, patientId, slot.doctor_id, slot.id, chosenDate]
+    );
+
+    // 5) mark parent slot as booked (so other UIs that rely on doctor_slots.status also see booked)
+    //    ทำใน transaction เดียวกัน (ปลอดภัยกับ FOR UPDATE)
+    await conn.query(
+      "UPDATE doctor_slots SET status = 'booked', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [slot.id]
     );
 
     await conn.commit();
@@ -710,7 +862,6 @@ export async function bookAppointment(patientId, slotId, chosenDate /* YYYY-MM-D
       slot_id: slot.id,
       chosen_date: chosenDate,
       status: "pending",
-      // สำหรับแสดงผล
       start_time: `${chosenDate} 00:00:00`,
       end_time: `${chosenDate} 23:59:59`,
     };
@@ -776,14 +927,16 @@ export async function listAppointmentsForUser(userId, role) {
 // 9) SCHEMAS
 ///////////////////////////////
 
-const SpecialtyIdsSchema = z.array(z.string().length(36, "id ต้องยาว 36 ตัว"))
+const SpecialtyIdsSchema = z
+  .array(z.string().min(1, "id ไม่ถูกต้อง").max(36, "id ยาวเกินกำหนด"))
   .max(10, "เลือกได้ไม่เกิน 10 สาขา");
 
-  // เบอร์โทร: แปลงเป็นตัวเลขล้วน แล้วบังคับ 9-10 หลัก หรือ null
 const PhoneSchema = z.preprocess((v) => {
-  if (v === undefined) return undefined;     // ไม่ส่งมา = ไม่อัปเดต
-  if (v === null) return null;               // ล้างค่า = null
-  const digits = String(v).replace(/\D/g, ""); // เก็บเฉพาะตัวเลข
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v === "string" && v.trim().toLowerCase() === "null") return null;
+  if (typeof v === "string" && v.trim() === "") return undefined;
+  const digits = String(v).replace(/\D/g, "");
   return digits;
 }, z.union([
   z.string().regex(/^\d{9,10}$/, "เบอร์โทรต้องเป็นตัวเลข 9 หรือ 10 หลัก"),
@@ -1123,11 +1276,26 @@ app.get("/health", (req, res) => {
 // register
 app.post(
   "/auth/register",
+  upload.single("userpic"), 
   asyncHandler(async (req, res) => {
-    const parsed = RegisterSchema.safeParse(req.body);
+    const body = { ...req.body };
+    if (typeof body.specialties === "string") {
+      try { body.specialties = JSON.parse(body.specialties); }
+      catch { body.specialties = body.specialties.split(",").map(s => s.trim()).filter(Boolean); }
+    }
+
+    const parsed = RegisterSchema.safeParse(body);
     if (!parsed.success) return respondValidation(res, parsed.error);
-    const user = await registerUser(parsed.data);
-    res.status(201).json({ user });
+
+    const userpicPath = req.file ? `/uploads/${req.file.filename}` : null;
+
+    try {
+      const user = await registerUser({ ...parsed.data, userpicPath });
+      res.status(201).json({ user });
+    } catch (err) {
+      if (userpicPath) deleteFileSafe(userpicPath); // rollback file เมื่อ insert fail
+      throw err;
+    }
   })
 );
 
@@ -1223,29 +1391,74 @@ app.post(
   })
 );
 
-
-// profile
+// แทน handler เดิมของ /users/me ด้วยโค้ดนี้
 app.get(
   "/users/me",
   requireAuth(),
   asyncHandler(async (req, res) => {
     const user = await getUserProfile(req.user.sub);
+
+    // ถ้าเป็นหมอ ให้ดึงสาขาที่ผูกไว้จาก doctor_specialties
+    if (user.role === "doctor") {
+      const [rows] = await pool.query(
+        `SELECT s.id, s.name
+         FROM doctor_specialties ds
+         JOIN specialties s ON s.id = ds.specialty_id
+         WHERE ds.doctor_id = ?
+         ORDER BY s.name ASC`,
+        [req.user.sub]
+      );
+      user.specialties = rows || []; // array of {id, name}
+    } else {
+      user.specialties = [];
+    }
+
     res.json({ user });
   })
 );
+
 
 app.put(
   "/users/me",
   requireAuth(),
+  upload.single("userpic"),
   asyncHandler(async (req, res) => {
-    const parsed = UpdateProfileSchema.safeParse(req.body);
+    // ถ้ามาแบบ multipart/form-data, req.body ทุกค่าเป็น string
+    // ถ้า client ส่ง specialty_ids เป็น JSON string หรือ CSV, แปลงให้เป็น array
+    const body = { ...req.body };
+
+    if (typeof body.specialty_ids === "string") {
+      try {
+        // พยายาม parse JSON ก่อน
+        body.specialty_ids = JSON.parse(body.specialty_ids);
+      } catch (e) {
+        // ถ้าไม่ใช่ JSON ให้ถือเป็น CSV (comma separated ids)
+        body.specialty_ids = body.specialty_ids
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    }
+
+    const parsed = UpdateProfileSchema.safeParse(body);
     if (!parsed.success) return respondValidation(res, parsed.error);
-    const user = await updateUserProfile(req.user.sub, parsed.data);
-    res.json({ user });
+
+    const patch = { ...parsed.data };
+
+    if (req.file) {
+      patch.userpicPath = `/uploads/${req.file.filename}`;
+    }
+
+    try {
+      const user = await updateUserProfile(req.user.sub, patch);
+      res.json({ user });
+    } catch (err) {
+      if (req.file) deleteFileSafe(`/uploads/${req.file.filename}`);
+      throw err;
+    }
   })
 );
 
-// doctors
 // doctors
 app.get(
   "/doctors",

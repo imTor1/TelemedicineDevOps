@@ -301,7 +301,7 @@ export default function Login() {
                   {loading ? <CircularProgress size={20} color="inherit" /> : "เข้าสู่ระบบ"}
                 </ShimmerButton>
 
-                <Box sx={{ display: "flex", justifyContent: "space-between", mt: 2, alignItems: "center" }}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", mt: 4, alignItems: "center" }}>
                   <Typography variant="body2" sx={{ color: "#374151" }}>
                     ยังไม่มีบัญชี? <a href="/register" style={{ color: "#374151", textDecoration: "underline" }}>สมัครสมาชิก</a>
                   </Typography>

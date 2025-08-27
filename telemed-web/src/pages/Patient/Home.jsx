@@ -60,7 +60,8 @@ export default function PatientHome() {
       setDoctors(r?.data?.data || []);
     } catch (e) {
       console.error("search doctors error:", e);
-      setSearchErr("ค้นหาไม่สำเร็จ กรุณาลองใหม่");
+      const msg = e?.response?.data?.error?.message || "ค้นหาไม่สำเร็จ กรุณาลองใหม่";
+      setSearchErr(msg);
     } finally {
       setSearching(false);
     }
@@ -77,7 +78,8 @@ export default function PatientHome() {
       setDoctors(r?.data?.data || []);
     } catch (e) {
       console.error("search by chip error:", e);
-      setSearchErr("ค้นหาไม่สำเร็จ กรุณาลองใหม่");
+      const msg = e?.response?.data?.error?.message || "ค้นหาไม่สำเร็จ กรุณาลองใหม่";
+      setSearchErr(msg);
     } finally {
       setSearching(false);
     }
@@ -95,6 +97,16 @@ export default function PatientHome() {
       e.preventDefault();
       handleSearch();
     }
+  };
+
+  // --- helper: build full URL for userpic (handles absolute URL or relative /uploads/ path)
+  const getUserpicUrl = (p) => {
+    if (!p) return null;
+    if (/^https?:\/\//i.test(p)) return p;
+    // try to use axios baseURL if configured, otherwise return path as-is
+    const base = api?.defaults?.baseURL || "";
+    if (base) return `${base.replace(/\/$/, "")}${p}`;
+    return p;
   };
 
   return (
@@ -117,51 +129,50 @@ export default function PatientHome() {
           </Typography>
 
           <Grid container spacing={2} alignItems="flex-start">
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="ค้นหา (ชื่อแพทย์)"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="เช่น นพ.สมชาย หรือ สมชาย"
-              onKeyDown={onKeyDown}
-              size="medium"
-            />
-          </Grid>
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label="ค้นหา (ชื่อแพทย์)"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="เช่น นพ.สมชาย หรือ สมชาย"
+                onKeyDown={onKeyDown}
+                size="medium"
+              />
+            </Grid>
 
-          <Grid item xs={12} md={4}>
-            <TextField
-              select
-              fullWidth
-              label="สาขา"
-              value={spec}
-              onChange={(e) => setSpec(e.target.value)}
-              helperText="เลือกสาขาเพื่อค้นหาให้เฉพาะเจาะจง"
-              size="medium"
-            >
-              <MenuItem value="">ทั้งหมด</MenuItem>
-              {specialties.map((s) => (
-                <MenuItem key={s.id} value={s.id}>
-                  {s.name}
-                </MenuItem>
-              ))}
-            </TextField>
-          </Grid>
+            <Grid item xs={12} md={4}>
+              <TextField
+                select
+                fullWidth
+                label="สาขา"
+                value={spec}
+                onChange={(e) => setSpec(e.target.value)}
+                helperText="เลือกสาขาเพื่อค้นหาให้เฉพาะเจาะจง"
+                size="medium"
+              >
+                <MenuItem value="">ทั้งหมด</MenuItem>
+                {specialties.map((s) => (
+                  <MenuItem key={s.id} value={s.id}>
+                    {s.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Grid>
 
-          {/* ปุ่มให้คงแนวกลางในคอลัมน์ของมัน */}
-          <Grid item xs={12} md={2} sx={{ display: "flex", alignItems: "center" }}>
-            <Button
-              variant="contained"
-              onClick={handleSearch}
-              fullWidth
-              disabled={searching}
-              startIcon={searching ? <CircularProgress size={16} color="inherit" /> : null}
-              sx={{ height: 44 }}
-            >
-              ค้นหา
-            </Button>
+            <Grid item xs={12} md={2} sx={{ display: "flex", alignItems: "center" }}>
+              <Button
+                variant="contained"
+                onClick={handleSearch}
+                fullWidth
+                disabled={searching}
+                startIcon={searching ? <CircularProgress size={16} color="inherit" /> : null}
+                sx={{ height: 44 }}
+              >
+                ค้นหา
+              </Button>
+            </Grid>
           </Grid>
-        </Grid>
 
           <Box sx={{ mt: 4 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
@@ -220,57 +231,66 @@ export default function PatientHome() {
               <Typography>ยังไม่มีผลลัพธ์ — ลองเปลี่ยนคำค้นหรือสาขา</Typography>
             </Box>
           ) : (
-            <List disablePadding>
-              {doctors.map((d) => (
-                <React.Fragment key={d.id}>
-                  <ListItem
-                    sx={{
-                      alignItems: "flex-start",
-                      py: 2,
-                      px: { xs: 1, md: 2 },
-                      display: "flex",
-                      gap: 2,
-                    }}
-                    secondaryAction={
-                      <Box sx={{ display: "flex", gap: 1 }}>
-                        <Button variant="outlined" size="small" onClick={() => nav(`/doctors/${d.id}`)}>
-                          รายละเอียด
-                        </Button>
-                        <Button variant="contained" size="small" onClick={() => goBook(d)}>
-                          จอง
-                        </Button>
-                      </Box>
-                    }
-                  >
-                    <ListItemAvatar>
-                      <Avatar sx={{ bgcolor: "primary.main", width: 48, height: 48 }}>
-                        {d.full_name ? d.full_name.charAt(0) : "D"}
-                      </Avatar>
-                    </ListItemAvatar>
+            <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
+              <List disablePadding>
+                {doctors.map((d) => {
+                  const src = getUserpicUrl(d.userpic || d.user_pic || d.avatar || "");
+                  return (
+                    <React.Fragment key={d.id}>
+                      <ListItem
+                        sx={{
+                          alignItems: "flex-start",
+                          py: 2,
+                          px: { xs: 1, md: 2 },
+                          display: "flex",
+                          gap: 2,
+                        }}
+                        secondaryAction={
+                          <Box sx={{ display: "flex", gap: 1 }}>
+                            <Button variant="outlined" size="small" onClick={() => nav(`/doctors/${d.id}`)}>
+                              รายละเอียด
+                            </Button>
+                            <Button variant="contained" size="small" onClick={() => goBook(d)}>
+                              จอง
+                            </Button>
+                          </Box>
+                        }
+                      >
+                        <ListItemAvatar>
+                          <Avatar
+                            src={src || undefined}
+                            alt={d.full_name || "Doctor"}
+                            sx={{ bgcolor: src ? "transparent" : "primary.main", width: 56, height: 56 }}
+                          >
+                            {!src && (d.full_name ? d.full_name.charAt(0) : "D")}
+                          </Avatar>
+                        </ListItemAvatar>
 
-                    <ListItemText
-                      primary={
-                        <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                          <Typography sx={{ fontWeight: 700 }}>{d.full_name}</Typography>
-                          {d.email && (
-                            <Typography variant="caption" color="text.secondary">
-                              • {d.email}
-                            </Typography>
-                          )}
-                          {d.phone && (
-                            <Typography variant="caption" color="text.secondary">
-                              • {d.phone}
-                            </Typography>
-                          )}
-                        </Box>
-                      }
-                      secondary={d.bio || ""}
-                    />
-                  </ListItem>
-                  <Divider component="li" />
-                </React.Fragment>
-              ))}
-            </List>
+                        <ListItemText
+                          primary={
+                            <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                              <Typography sx={{ fontWeight: 700 }}>{d.full_name}</Typography>
+                              {d.email && (
+                                <Typography variant="caption" color="text.secondary">
+                                  • {d.email}
+                                </Typography>
+                              )}
+                              {d.phone && (
+                                <Typography variant="caption" color="text.secondary">
+                                  • {d.phone}
+                                </Typography>
+                              )}
+                            </Box>
+                          }
+                          secondary={d.bio || ""}
+                        />
+                      </ListItem>
+                      <Divider component="li" />
+                    </React.Fragment>
+                  );
+                })}
+              </List>
+            </Box>
           )}
         </Paper>
 

@@ -1,7 +1,8 @@
 // src/pages/Auth/Register.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
+  Avatar,
   Box,
   Button,
   CircularProgress,
@@ -23,10 +24,12 @@ import {
   ListItemText,
   Checkbox,
   IconButton,
-  Select, // << เพิ่ม Select ของ MUI
+  Select,
+  Tooltip,
 } from "@mui/material";
 import { createTheme, ThemeProvider, styled } from "@mui/material/styles";
 import { keyframes } from "@emotion/react";
+import PhotoCameraIcon from "@mui/icons-material/PhotoCamera";
 import api from "../../lib/api";
 
 const fadeIn = keyframes`
@@ -120,8 +123,12 @@ const Transition = React.forwardRef(function Transition(props, ref) {
   return <Slide direction="down" ref={ref} {...props} />;
 });
 
+const MAX_IMAGE_MB = 5;
+
 export default function Register() {
   const nav = useNavigate();
+  const fileInputRef = useRef(null);
+
   const [form, setForm] = useState({
     role: "patient",
     full_name: "",
@@ -136,6 +143,7 @@ export default function Register() {
     phone: "",
     password: "",
     specialties: "",
+    userpic: "",
   });
   const [submitErr, setSubmitErr] = useState("");
   const [loading, setLoading] = useState(false);
@@ -146,19 +154,34 @@ export default function Register() {
   const [specDialogOpen, setSpecDialogOpen] = useState(false);
   const [selectedSpecs, setSelectedSpecs] = useState([]);
 
+  // userpic
+  const [userpicFile, setUserpicFile] = useState(null);
+  const [userpicPreview, setUserpicPreview] = useState("");
+
   useEffect(() => {
     (async () => {
       try {
         const r = await api.get("/specialties");
         setSpecialties(r?.data?.data || []);
-      } catch (e) {
-        console.warn("failed to load specialties:", e);
+      } catch {
         setSpecialties([]);
       }
     })();
   }, []);
 
-  // validators
+  useEffect(() => {
+    if (form.role !== "doctor") {
+      setSelectedSpecs([]);
+      setFieldErr((fe) => ({ ...fe, specialties: "" }));
+    }
+  }, [form.role]);
+
+  useEffect(() => {
+    return () => {
+      if (userpicPreview) URL.revokeObjectURL(userpicPreview);
+    };
+  }, [userpicPreview]);
+
   const isGmailOrHotmail = (value) => {
     if (!value) return false;
     const re = /^[^\s@]+@(gmail\.com|hotmail\.com)$/i;
@@ -169,12 +192,10 @@ export default function Register() {
     const digits = value.replace(/\D/g, "");
     return /^[0-9]{9,10}$/.test(digits);
   };
-  const isPasswordValid = (value) => {
-    return typeof value === "string" && value.length >= 4;
-  };
+  const isPasswordValid = (value) => typeof value === "string" && value.length >= 4;
 
   const validateAll = () => {
-    const errs = { full_name: "", email: "", phone: "", password: "", specialties: "" };
+    const errs = { full_name: "", email: "", phone: "", password: "", specialties: "", userpic: "" };
 
     if (!form.full_name || form.full_name.trim().length < 2) {
       errs.full_name = "กรุณาระบุชื่อ-นามสกุล (อย่างน้อย 2 ตัวอักษร)";
@@ -192,20 +213,52 @@ export default function Register() {
     } else if (!isPasswordValid(form.password)) {
       errs.password = "รหัสผ่านต้องอย่างน้อย 4 ตัวอักษร";
     }
+    if (form.role === "doctor" && (!selectedSpecs || selectedSpecs.length === 0)) {
+      errs.specialties = "แพทย์ต้องเลือกสาขาอย่างน้อย 1 รายการ";
+    }
 
-    if (form.role === "doctor") {
-      if (!selectedSpecs || selectedSpecs.length === 0) {
-        errs.specialties = "แพทย์ต้องเลือกสาขาอย่างน้อย 1 รายการ";
-      }
+    if (userpicFile) {
+      const sizeMb = userpicFile.size / (1024 * 1024);
+      const allowed = ["image/jpeg", "image/png", "image/webp"];
+      if (sizeMb > MAX_IMAGE_MB) errs.userpic = `ขนาดรูปต้องไม่เกิน ${MAX_IMAGE_MB}MB`;
+      if (!allowed.includes(userpicFile.type)) errs.userpic = "รองรับเฉพาะ JPG/PNG/WebP";
     }
 
     setFieldErr(errs);
-    return !errs.full_name && !errs.email && !errs.phone && !errs.password && !errs.specialties;
+    return Object.values(errs).every((v) => !v);
+  };
+
+  const handleFilePick = () => fileInputRef.current?.click();
+
+  const handleFileChange = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+
+    const sizeMb = f.size / (1024 * 1024);
+    const allowed = ["image/jpeg", "image/png", "image/webp"];
+    if (sizeMb > MAX_IMAGE_MB) {
+      setFieldErr((fe) => ({ ...fe, userpic: `ขนาดรูปต้องไม่เกิน ${MAX_IMAGE_MB}MB` }));
+      setUserpicFile(null);
+      setUserpicPreview("");
+      return;
+    }
+    if (!allowed.includes(f.type)) {
+      setFieldErr((fe) => ({ ...fe, userpic: "รองรับเฉพาะ JPG/PNG/WebP" }));
+      setUserpicFile(null);
+      setUserpicPreview("");
+      return;
+    }
+
+    setFieldErr((fe) => ({ ...fe, userpic: "" }));
+    setUserpicFile(f);
+    const url = URL.createObjectURL(f);
+    setUserpicPreview(url);
   };
 
   const submit = async (e) => {
     e.preventDefault();
     setSubmitErr("");
+
     const ok = validateAll();
     if (!ok) {
       setSubmitErr("กรุณาแก้ไขข้อผิดพลาดในฟอร์มก่อนดำเนินการ");
@@ -214,28 +267,37 @@ export default function Register() {
 
     setLoading(true);
     try {
-      const payload = {
-        role: form.role,
-        full_name: form.full_name.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim() || null,
-        password: form.password,
-        specialties: form.role === "doctor" ? selectedSpecs.map((s) => s.id) : undefined,
-      };
+      const fd = new FormData();
+      fd.append("role", form.role);
+      fd.append("full_name", form.full_name.trim());
+      fd.append("email", form.email.trim());
+      if (form.phone) fd.append("phone", form.phone.trim());
+      fd.append("password", form.password);
 
-      const res = await api.post("/auth/register", payload);
+      if (form.role === "doctor" && selectedSpecs.length) {
+        fd.append("specialties", JSON.stringify(selectedSpecs.map((s) => s.id)));
+      }
+
+      if (userpicFile) {
+        fd.append("userpic", userpicFile);
+      }
+
+      const res = await api.post("/auth/register", fd);
       if (res?.data?.user || res?.status === 201) {
         setSuccessOpen(true);
       } else {
         setSubmitErr("สมัครสมาชิกไม่สำเร็จ");
       }
     } catch (ex) {
-      const serverErr = ex?.response?.data?.error;
+      // ✅ รองรับทั้งเคส normalize (ex.message/ex.payload) และของ axios เดิม (ex.response)
+      const payload = ex?.payload ?? ex?.response?.data;
+      const serverErr = payload?.error;
+
       if (serverErr?.details && Array.isArray(serverErr.details) && serverErr.details.length) {
         const msgs = serverErr.details.map((d) => `${d.field || "(general)"}: ${d.message}`);
         setSubmitErr(msgs.join(" / "));
-      } else if (serverErr?.message) {
-        setSubmitErr(serverErr.message);
+      } else if (serverErr?.message || ex?.message) {
+        setSubmitErr(serverErr?.message || ex.message);
       } else {
         setSubmitErr("สมัครสมาชิกไม่สำเร็จ");
       }
@@ -251,7 +313,6 @@ export default function Register() {
 
   const updateField = (k, v) => setForm((s) => ({ ...s, [k]: v }));
 
-  // specialties dialog handlers
   const toggleSpec = (spec) => {
     const found = selectedSpecs.find((s) => s.id === spec.id);
     if (found) setSelectedSpecs((s) => s.filter((x) => x.id !== spec.id));
@@ -266,7 +327,7 @@ export default function Register() {
 
   return (
     <ThemeProvider theme={theme}>
-      {/* background image */}
+      {/* bg */}
       <Box
         sx={{
           position: "fixed",
@@ -300,9 +361,62 @@ export default function Register() {
                 สร้างบัญชีใหม่เพื่อใช้งานระบบ นัดหมายกับแพทย์
               </Typography>
 
+              {/* avatar + upload */}
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  mb: 2,
+                  position: "relative",
+                }}
+              >
+                <Avatar
+                  src={userpicPreview || undefined}
+                  alt="userpic"
+                  sx={{
+                    width: 104,
+                    height: 104,
+                    border: "2px solid #e6e7ea",
+                    boxShadow: "0 10px 24px rgba(8,12,20,0.06)",
+                    bgcolor: "#f3f4f6",
+                  }}
+                />
+                <Tooltip title="อัปโหลดรูปโปรไฟล์">
+                  <IconButton
+                    onClick={() => fileInputRef.current?.click()}
+                    sx={{
+                      position: "absolute",
+                      right: "calc(50% - 52px)",
+                      bottom: -6,
+                      bgcolor: "#2b2b2b",
+                      color: "#fff",
+                      "&:hover": { bgcolor: "#1f1f1f" },
+                      boxShadow: "0 6px 12px rgba(8,12,20,0.12)",
+                    }}
+                    size="small"
+                  >
+                    <PhotoCameraIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  onChange={handleFileChange}
+                />
+              </Box>
+              {fieldErr.userpic && (
+                <Typography align="center" color="error" variant="body2" sx={{ mb: 1 }}>
+                  {fieldErr.userpic}
+                </Typography>
+              )}
+
               <Box
                 component="form"
                 onSubmit={submit}
+                encType="multipart/form-data"
                 sx={{
                   mt: 1,
                   display: "grid",
@@ -310,7 +424,7 @@ export default function Register() {
                   gap: 2,
                 }}
               >
-                {/* ประเภท */}
+                {/* role */}
                 <FormControl fullWidth>
                   <InputLabel id="role-label">ประเภท</InputLabel>
                   <Select
@@ -368,7 +482,7 @@ export default function Register() {
                   helperText={fieldErr.password || ""}
                 />
 
-                {/* ถ้าเป็น doctor -> show multi-select trigger */}
+                {/* doctor specialties */}
                 {form.role === "doctor" && (
                   <Box sx={{ gridColumn: "1 / -1", display: "flex", gap: 2, alignItems: "center", mt: 1 }}>
                     <Button variant="outlined" onClick={openSpecDialog} sx={{ textTransform: "none" }}>
@@ -436,7 +550,7 @@ export default function Register() {
         </Box>
       </Container>
 
-      {/* Dialog เลือกสาขา */}
+      {/* Specialties dialog */}
       <Dialog
         open={specDialogOpen}
         onClose={closeSpecDialog}
@@ -481,7 +595,7 @@ export default function Register() {
         </DialogActions>
       </Dialog>
 
-      {/* Dialog สมัครสำเร็จ */}
+      {/* success dialog */}
       <Dialog open={successOpen} TransitionComponent={Transition} keepMounted onClose={() => setSuccessOpen(false)}>
         <DialogTitle>สมัครสมาชิกสำเร็จ</DialogTitle>
         <DialogContent>

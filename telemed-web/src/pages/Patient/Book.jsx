@@ -100,7 +100,7 @@ export default function PatientBook() {
 
   useEffect(() => {
     fetchDoctorProfile();
-    // อยากโหลด slot ให้เลยก็ได้: fetchSlots();
+    // load slots on mount (so user doesn't have to click search)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doctorId]);
 
@@ -116,16 +116,26 @@ export default function PatientBook() {
       const r = await api.get(`/doctors/${doctorId}/slots`, {
         params: { from: fromDate, to: toDate },
       });
+      // server returns statuses normalized: available/booked/closed
       const rows = (r?.data?.data || [])
-        .filter((s) => s.status === "available") // ⬅️ แสดงเฉพาะที่ยังว่าง
+        .filter((s) => s.status === "available") // แสดงเฉพาะที่ยังว่าง
         .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
       setSlots(rows);
     } catch (e) {
-      setError(e?.message || "โหลดวันว่างไม่สำเร็จ");
+      // try to read meaningful message from server
+      const msg = e?.response?.data?.error?.message || e?.message || "โหลดวันว่างไม่สำเร็จ";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
+
+  // เรียก fetchSlots เมื่อ mount หรือ เมื่อ from/to/doctorId เปลี่ยน
+  useEffect(() => {
+    if (!doctorId) return;
+    fetchSlots();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doctorId, fromDate, toDate]);
 
   const backToSearch = () => nav("/patient/home");
 
@@ -147,14 +157,20 @@ export default function PatientBook() {
       // chosen_date มาจาก start_time ที่เป็น "YYYY-MM-DD 00:00:00"
       const ymd = selectedSlot.start_time.slice(0, 10);
       await api.post("/appointments", {
-            slot_id: selectedSlot.slot_id ?? String(selectedSlot.id).split(":")[0],   // ไอดี slot แม่
-            chosen_date: (selectedSlot.chosen_date || selectedSlot.start_time?.slice(0,10)), // YYYY-MM-DD
-         });
+        slot_id: selectedSlot.slot_id ?? String(selectedSlot.id).split(":")[0], // ไอดี slot แม่
+        chosen_date: selectedSlot.chosen_date || selectedSlot.start_time?.slice(0, 10), // YYYY-MM-DD
+      });
       setBookResult({ ok: true, msg: "จองแล้ว รอการยืนยัน" });
+
+      // ปิด dialog และรีเฟรชรายการวันว่างทันที
+      setConfirming(false);
+      setSelectedSlot(null);
+      await fetchSlots();
     } catch (e) {
+      const msg = e?.response?.data?.error?.message || e?.message || "จองไม่สำเร็จ กรุณาลองใหม่";
       setBookResult({
         ok: false,
-        msg: e?.message || "จองไม่สำเร็จ กรุณาลองใหม่",
+        msg,
       });
     } finally {
       setBooking(false);
@@ -165,7 +181,16 @@ export default function PatientBook() {
   const minTo = fromDate || minFrom;
 
   return (
-    <Box sx={{ minHeight: "80vh", pt: 6, pb: 6 }}>
+    <Box
+      sx={{
+        backgroundImage: 'url("https://images.unsplash.com/photo-1587370356614-25e4f454f0a2?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D")',
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundAttachment: "scroll",
+        pt: 6,
+        pb: 6,
+      }}
+    >
       <Container maxWidth="lg">
         {/* Doctor header */}
         <Paper sx={{ p: 3, borderRadius: 2, mb: 3 }}>
@@ -275,48 +300,49 @@ export default function PatientBook() {
               <Typography>ไม่มีวันว่างในช่วงวันที่ที่เลือก</Typography>
             </Box>
           ) : (
-            <List disablePadding>
-              {slots.map((s) => (
-                <ListItem
-                  key={s.id}
-                  sx={{
-                    px: { xs: 1, md: 2 },
-                    py: 1.5,
-                    borderRadius: 1.5,
-                    mb: 1,
-                    boxShadow: "0 6px 16px rgba(16,24,40,0.06)",
-                    bgcolor: "background.paper",
-                  }}
-                  secondaryAction={
-                    <Button
-                      variant="contained"
-                      size="small"
-                      onClick={() => openConfirm(s)}
-                    >
-                      จองวันนี้
-                    </Button>
-                  }
-                >
-                  <ListItemAvatar>
-                    <Avatar>
-                      <CalendarMonthIcon />
-                    </Avatar>
-                  </ListItemAvatar>
-                  <ListItemText
-                    primary={
-                      <Typography sx={{ fontWeight: 700 }}>
-                        {fmtDateTH(s.start_time)}
-                      </Typography>
+            <Box sx={{ maxHeight: 300, overflowY: "auto" }}>
+              <List disablePadding>
+                {slots.map((s) => (
+                  <ListItem
+                    key={s.id}
+                    sx={{
+                      px: { xs: 1, md: 2 },
+                      py: 1.5,
+                      borderRadius: 1.5,
+                      mb: 1,
+                      boxShadow: "0 6px 16px rgba(16,24,40,0.06)",
+                    }}
+                    secondaryAction={
+                      <Button
+                        variant="contained"
+                        size="small"
+                        onClick={() => openConfirm(s)}
+                      >
+                        จองวันนี้
+                      </Button>
                     }
-                    secondary={
-                      <Typography variant="caption" color="text.secondary">
-                        สถานะ: {s.status || "available"}
-                      </Typography>
-                    }
-                  />
-                </ListItem>
-              ))}
-            </List>
+                  >
+                    <ListItemAvatar>
+                      <Avatar>
+                        <CalendarMonthIcon />
+                      </Avatar>
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary={
+                        <Typography sx={{ fontWeight: 700 }}>
+                          {fmtDateTH(s.start_time)}
+                        </Typography>
+                      }
+                      secondary={
+                        <Typography variant="caption" color="text.secondary">
+                          สถานะ: {s.status || "available"}
+                        </Typography>
+                      }
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
           )}
         </Paper>
       </Container>
