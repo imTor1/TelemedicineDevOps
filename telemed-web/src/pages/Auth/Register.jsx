@@ -23,6 +23,7 @@ import {
   ListItemText,
   Checkbox,
   IconButton,
+  Select, // << เพิ่ม Select ของ MUI
 } from "@mui/material";
 import { createTheme, ThemeProvider, styled } from "@mui/material/styles";
 import { keyframes } from "@emotion/react";
@@ -146,7 +147,6 @@ export default function Register() {
   const [selectedSpecs, setSelectedSpecs] = useState([]);
 
   useEffect(() => {
-    // load specialties list
     (async () => {
       try {
         const r = await api.get("/specialties");
@@ -193,7 +193,6 @@ export default function Register() {
       errs.password = "รหัสผ่านต้องอย่างน้อย 4 ตัวอักษร";
     }
 
-    // ถ้าเลือกเป็น doctor → ต้องมี selectedSpecs อย่างน้อย 1
     if (form.role === "doctor") {
       if (!selectedSpecs || selectedSpecs.length === 0) {
         errs.specialties = "แพทย์ต้องเลือกสาขาอย่างน้อย 1 รายการ";
@@ -201,15 +200,6 @@ export default function Register() {
     }
 
     setFieldErr(errs);
-
-    console.groupCollapsed("Register Validation");
-    console.log("full_name:", errs.full_name || "OK");
-    console.log("email:", errs.email || "OK");
-    console.log("phone:", errs.phone || (form.phone ? "OK" : "empty (optional)"));
-    console.log("password:", errs.password || "OK");
-    console.log("specialties:", errs.specialties || "OK");
-    console.groupEnd();
-
     return !errs.full_name && !errs.email && !errs.phone && !errs.password && !errs.specialties;
   };
 
@@ -233,20 +223,15 @@ export default function Register() {
         specialties: form.role === "doctor" ? selectedSpecs.map((s) => s.id) : undefined,
       };
 
-      console.group("Register Submit");
-      console.log("payload (sanitized):", { ...payload, password: "*****" });
-      console.groupEnd();
-
       const res = await api.post("/auth/register", payload);
-
-      // success -> show dialog
-      setSuccessOpen(true);
+      if (res?.data?.user || res?.status === 201) {
+        setSuccessOpen(true);
+      } else {
+        setSubmitErr("สมัครสมาชิกไม่สำเร็จ");
+      }
     } catch (ex) {
-      console.error("Register failed, full error object: ", ex);
-      // try to extract server validation details
       const serverErr = ex?.response?.data?.error;
       if (serverErr?.details && Array.isArray(serverErr.details) && serverErr.details.length) {
-        // map details to readable string
         const msgs = serverErr.details.map((d) => `${d.field || "(general)"}: ${d.message}`);
         setSubmitErr(msgs.join(" / "));
       } else if (serverErr?.message) {
@@ -264,9 +249,7 @@ export default function Register() {
     setTimeout(() => nav("/login"), 260);
   };
 
-  const updateField = (k, v) => {
-    setForm((s) => ({ ...s, [k]: v }));
-  };
+  const updateField = (k, v) => setForm((s) => ({ ...s, [k]: v }));
 
   // specialties dialog handlers
   const toggleSpec = (spec) => {
@@ -327,23 +310,20 @@ export default function Register() {
                   gap: 2,
                 }}
               >
+                {/* ประเภท */}
                 <FormControl fullWidth>
                   <InputLabel id="role-label">ประเภท</InputLabel>
-                  <select
-                    aria-label="ประเภท"
+                  <Select
+                    labelId="role-label"
+                    id="role-select"
+                    label="ประเภท"
                     value={form.role}
                     onChange={(e) => updateField("role", e.target.value)}
-                    style={{
-                      height: 46,
-                      borderRadius: 8,
-                      paddingLeft: 12,
-                      border: "1px solid #e6e7ea",
-                      background: "#fff",
-                    }}
+                    sx={{ borderRadius: 2, background: "#fff" }}
                   >
-                    <option value="patient">คนไข้ (Patient)</option>
-                    <option value="doctor">แพทย์ (Doctor)</option>
-                  </select>
+                    <MenuItem value="patient">คนไข้ (Patient)</MenuItem>
+                    <MenuItem value="doctor">แพทย์ (Doctor)</MenuItem>
+                  </Select>
                 </FormControl>
 
                 <TextField
@@ -439,7 +419,6 @@ export default function Register() {
                   </Box>
 
                   <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-                    {/* ย้ายลิงก์ไปทางซ้าย: (wrap in a small container left) */}
                     <Box sx={{ mr: 2 }}>
                       <RouterLink to="/login" style={{ color: "#374151", textDecoration: "none" }}>
                         มีบัญชีแล้ว? เข้าสู่ระบบ
@@ -457,6 +436,7 @@ export default function Register() {
         </Box>
       </Container>
 
+      {/* Dialog เลือกสาขา */}
       <Dialog
         open={specDialogOpen}
         onClose={closeSpecDialog}
@@ -501,6 +481,7 @@ export default function Register() {
         </DialogActions>
       </Dialog>
 
+      {/* Dialog สมัครสำเร็จ */}
       <Dialog open={successOpen} TransitionComponent={Transition} keepMounted onClose={() => setSuccessOpen(false)}>
         <DialogTitle>สมัครสมาชิกสำเร็จ</DialogTitle>
         <DialogContent>

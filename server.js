@@ -20,6 +20,8 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import mysql from "mysql2/promise";
 import Redis from "ioredis";
+import swaggerUi from "swagger-ui-express";
+
 
 ///////////////////////////////
 // 2) CONFIG / ENV
@@ -183,22 +185,38 @@ function respondValidation(res, err) {
   });
 }
 
+function getTokenFromReq(req) {
+  // รองรับ Authorization ทุกทรง + ตัดเครื่องหมาย quote ทิ้ง
+  const raw = req.get("authorization") || req.get("Authorization") || "";
+  let token = null;
+  const m = raw.match(/Bearer\s+(.+)/i);
+  if (m && m[1]) token = m[1].trim().replace(/^"(.+)"$/, "$1").replace(/^'(.+)'$/, "$1");
+
+  // ช่องทางสำรอง
+  if (!token && req.headers["x-access-token"]) token = String(req.headers["x-access-token"]).trim();
+  if (!token && req.query && (req.query.access_token || req.query.token)) {
+    token = String(req.query.access_token || req.query.token).trim();
+  }
+  return token || null;
+}
+
 function requireAuth(roles = []) {
   return (req, res, next) => {
     try {
-      const hdr = req.headers.authorization || "";
-      const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
+      const token = getTokenFromReq(req);
       if (!token) {
-        return res
-          .status(401)
-          .json({ error: { code: "UNAUTHORIZED", message: "กรุณาเข้าสู่ระบบก่อน" } });
+        return res.status(401).json({
+          error: { code: "UNAUTHORIZED", message: "กรุณาเข้าสู่ระบบก่อน" },
+        });
       }
-      const payload = verifyJwt(token); // may throw
+
+      const payload = verifyJwt(token); // จะ throw ถ้าเสีย/หมดอายุ
       if (roles.length && !roles.includes(payload.role)) {
-        return res
-          .status(403)
-          .json({ error: { code: "FORBIDDEN", message: "ไม่มีสิทธิ์เข้าถึงทรัพยากรนี้" } });
+        return res.status(403).json({
+          error: { code: "FORBIDDEN", message: "ไม่มีสิทธิ์เข้าถึงทรัพยากรนี้" },
+        });
       }
+
       req.user = payload;
       next();
     } catch {
@@ -211,6 +229,7 @@ function requireAuth(roles = []) {
     }
   };
 }
+
 
 ///////////////////////////////
 // 7) UTILS (ID / TIME / PASSWORD / JWT)
@@ -228,6 +247,10 @@ function looksLikeId(s) {
   return typeof s === "string" && s.length === 36;
 }
 
+// เป็นตัวเลขล้วนไหม (สำหรับ id แบบ INT)
+function isNumericId(v) {
+  return typeof v === "string" && /^\d+$/.test(v);
+}
 
 // === Helpers for date-only slots (daily model) ===
 function isDateOnly(s) {
@@ -756,20 +779,25 @@ export async function listAppointmentsForUser(userId, role) {
 const SpecialtyIdsSchema = z.array(z.string().length(36, "id ต้องยาว 36 ตัว"))
   .max(10, "เลือกได้ไม่เกิน 10 สาขา");
 
+  // เบอร์โทร: แปลงเป็นตัวเลขล้วน แล้วบังคับ 9-10 หลัก หรือ null
+const PhoneSchema = z.preprocess((v) => {
+  if (v === undefined) return undefined;     // ไม่ส่งมา = ไม่อัปเดต
+  if (v === null) return null;               // ล้างค่า = null
+  const digits = String(v).replace(/\D/g, ""); // เก็บเฉพาะตัวเลข
+  return digits;
+}, z.union([
+  z.string().regex(/^\d{9,10}$/, "เบอร์โทรต้องเป็นตัวเลข 9 หรือ 10 หลัก"),
+  z.null()
+]));
+
 // Register schema (แก้ให้รองรับ specialties และบังคับให้ doctor ต้องเลือกอย่างน้อย 1)
-const RegisterSchema = z
-  .object({
-    role: z.enum(["patient", "doctor"], { message: "role ไม่ถูกต้อง" }),
-    full_name: z.string().min(1, "กรุณาระบุชื่อ-นามสกุล"),
-    email: z.string().email("อีเมลไม่ถูกต้อง"),
-    phone: z
-      .string()
-      .min(9, "เบอร์โทรไม่ถูกต้อง")
-      .max(10, "เบอร์โทรยาวเกินไป")
-      .optional()
-      .nullable(),
-    password: z.string().min(4, "รหัสผ่านต้องยาวอย่างน้อย 4 ตัวอักษร"),
-    specialties: z.array(z.string()).optional().nullable(), // optional: จะเช็คเพิ่มเติมด้านล่าง
+const RegisterSchema = z.object({
+  role: z.enum(["patient", "doctor"], { message: "role ไม่ถูกต้อง" }),
+  full_name: z.string().min(1, "กรุณาระบุชื่อ-นามสกุล"),
+  email: z.string().email("อีเมลไม่ถูกต้อง"),
+  phone: PhoneSchema.optional(), 
+  password: z.string().min(4, "รหัสผ่านต้องยาวอย่างน้อย 4 ตัวอักษร"),
+  specialties: z.array(z.string()).optional().nullable(),
   })
   .superRefine((data, ctx) => {
     // ถ้าเป็น doctor → ต้องมี specialties อย่างน้อย 1 รายการ
@@ -792,16 +820,22 @@ const LoginSchema = z.object({
 
 const UpdateProfileSchema = z.object({
   full_name: z.string().min(1, "กรุณาระบุชื่อ-นามสกุล").optional(),
-  phone: z.string().min(9, "เบอร์โทรไม่ถูกต้อง").max(32, "เบอร์โทรยาวเกินไป").optional().nullable(),
-  // เพิ่มใหม่: อัปเดตสาขาเฉพาะหมอ
+  phone: PhoneSchema.optional(),                 // <<<< แก้ตรงนี้
   specialty_ids: SpecialtyIdsSchema.optional(),
 });
 
 const SearchDoctorsQuery = z.object({
   q: z.string().optional(),
-  specialty_id: z.string().optional(),
+  // specialty_id รับได้ทั้ง number หรือ string (เช่น UUID 36 ตัว)
+  specialty_id: z.preprocess((v) => {
+    if (v === undefined) return undefined;
+    const s = String(v);
+    // เป็นตัวเลขก็แปลงเป็น Number, ไม่งั้นคงเป็น string (เช่น UUID/รหัส prefixed)
+    return /^\d+$/.test(s) ? Number(s) : s;
+  }, z.union([z.number(), z.string()])).optional(),
   specialty_name: z.string().optional(),
 });
+
 
 const CreateSlotSchema = z.object({
   start_time: z.string().min(10, "ต้องระบุเวลาเริ่ม"),
@@ -835,11 +869,247 @@ const ListSlotsQuery = z.object({
   to: DateOrDateTime.optional(),
 });
 
-// ================= schemas =================
 const BookSchema = z.object({
   slot_id: z.string().min(1, "กรุณาระบุ slot_id"),
   chosen_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)"),
 });
+
+// รายงาน (date optional: ถ้าไม่ส่ง = สรุปทั้งหมดของ scope นั้น)
+const ReportQuery = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)").optional(),
+  doctor_id: z.string().length(36).optional() // admin จะส่งมาก็ได้
+});
+
+// =========================== SWAGGER / OPENAPI ===========================
+const openapiSpec = {
+  openapi: "3.0.3",
+  info: { title: "Telemedicine API", version: "1.0.0" },
+  servers: [{ url: `http://localhost:${env.PORT}` }],
+  components: {
+    securitySchemes: {
+      BearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" }
+    },
+    schemas: {
+      ErrorResponse: {
+        type: "object",
+        properties: {
+          error: {
+            type: "object",
+            properties: {
+              code: { type: "string" },
+              message: { type: "string" },
+              details: { type: "array", items: {
+                type: "object",
+                properties: { field: {type:"string"}, message:{type:"string"} }
+              }}
+            },
+            required: ["code","message"]
+          }
+        }
+      },
+      RegisterRequest: {
+        type: "object",
+        required: ["role","full_name","email","password"],
+        properties: {
+          role: { type: "string", enum: ["patient","doctor"] },
+          full_name: { type: "string" },
+          email: { type: "string", format: "email" },
+          phone: { type: "string", nullable: true },
+          password: { type: "string" },
+          specialties: { type: "array", items: { type: "string" } }
+        }
+      },
+      LoginRequest: {
+        type: "object",
+        required: ["email","password"],
+        properties: { email:{type:"string",format:"email"}, password:{type:"string"} }
+      },
+      TokenUser: {
+        type: "object",
+        properties: {
+          id:{type:"string"}, role:{type:"string"},
+          full_name:{type:"string"}, email:{type:"string"}, phone:{type:"string",nullable:true}
+        }
+      },
+      TokenResponse: {
+        type: "object",
+        properties: { token:{type:"string"}, user:{ $ref:"#/components/schemas/TokenUser" } },
+        required: ["token","user"]
+      },
+      Doctor: {
+        type: "object",
+        properties: { id:{type:"string"}, full_name:{type:"string"}, email:{type:"string"}, phone:{type:"string"} }
+      },
+      Specialty: { type:"object", properties:{ id:{type:"string"}, name:{type:"string"} } },
+      SlotRequest: {
+        type: "object",
+        required: ["start_time","end_time"],
+        properties: { start_time:{type:"string"}, end_time:{type:"string"} }
+      },
+      Slot: {
+        type:"object",
+        properties:{
+          id:{type:"string"}, doctor_id:{type:"string"},
+          start_time:{type:"string"}, end_time:{type:"string"}, status:{type:"string"}
+        }
+      },
+      AppointmentRequest: {
+        type:"object",
+        required:["slot_id","chosen_date"],
+        properties:{ slot_id:{type:"string"}, chosen_date:{type:"string", example:"2025-09-01"} }
+      },
+      Appointment: {
+        type:"object",
+        properties:{
+          id:{type:"string"}, patient_id:{type:"string"}, doctor_id:{type:"string"},
+          slot_id:{type:"string"}, chosen_date:{type:"string"}, status:{type:"string"},
+          start_time:{type:"string"}, end_time:{type:"string"}
+        }
+      },
+      UpdateApptStatusRequest: {
+        type:"object",
+        required:["status"],
+        properties:{ status:{type:"string", enum:["pending","confirmed","rejected","cancelled"]} }
+      },
+      ReportResponse: {
+        type:"object",
+        properties:{
+          date:{type:"string", example:"2025-08-27"},
+          role:{type:"string", enum:["doctor","patient"]},
+          total:{type:"integer"},
+          by_status:{
+            type:"object",
+            properties:{ pending:{type:"integer"}, confirmed:{type:"integer"}, rejected:{type:"integer"}, cancelled:{type:"integer"} }
+          },
+          recent_7_days:{
+            type:"array",
+            items:{ type:"object", properties:{ date:{type:"string"}, total:{type:"integer"} } }
+          }
+        }
+      }
+    }
+  },
+  paths: {
+    "/health": {
+      get: {
+        summary: "Healthcheck",
+        responses: { "200": { description: "OK" } }
+      }
+    },
+    "/auth/register": {
+      post: {
+        summary: "Register",
+        requestBody: { required:true, content: { "application/json": { schema: { $ref:"#/components/schemas/RegisterRequest" } } } },
+        responses: {
+          "201": { description: "Created" },
+          "400": { description: "Bad Request", content:{ "application/json": { schema:{ $ref:"#/components/schemas/ErrorResponse" } } } },
+          "409": { description: "Duplicate", content:{ "application/json": { schema:{ $ref:"#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/auth/login": {
+      post: {
+        summary: "Login",
+        requestBody: { required:true, content: { "application/json": { schema: { $ref:"#/components/schemas/LoginRequest" } } } },
+        responses: {
+          "200": { description: "OK", content: { "application/json": { schema: { $ref:"#/components/schemas/TokenResponse" } } } },
+          "401": { description: "Invalid", content:{ "application/json": { schema:{ $ref:"#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/users/me": {
+      get: {
+        security: [{ BearerAuth: [] }],
+        summary: "My profile",
+        responses: { "200": { description:"OK" }, "401": { description:"Unauthorized" } }
+      },
+      put: {
+        security: [{ BearerAuth: [] }],
+        summary: "Update my profile",
+        responses: { "200": { description:"OK" }, "400":{description:"Bad Request"} }
+      }
+    },
+    "/doctors": {
+      get: {
+        summary: "Search doctors",
+        parameters: [
+          { name:"q", in:"query", schema:{type:"string"} },
+          { name:"specialty", in:"query", schema:{type:"string"} },
+          { name:"specialty_id", in:"query", schema:{type:"string"} },
+          { name:"specialty_name", in:"query", schema:{type:"string"} },
+        ],
+        responses: { "200": { description:"OK" } }
+      }
+    },
+    "/doctors/{id}/slots": {
+      get: {
+        summary: "List doctor slots (daily virtual)",
+        parameters: [
+          { name:"id", in:"path", required:true, schema:{type:"string"} },
+          { name:"from", in:"query", schema:{type:"string"} },
+          { name:"to", in:"query", schema:{type:"string"} }
+        ],
+        responses: { "200": { description:"OK" } }
+      },
+      post: {
+        security: [{ BearerAuth: [] }],
+        summary: "Create slot (doctor only)",
+        parameters: [{ name:"id", in:"path", required:true, schema:{type:"string"} }],
+        requestBody: { required:true, content:{"application/json": { schema: { $ref:"#/components/schemas/SlotRequest" } } } },
+        responses: { "201": { description:"Created" }, "403":{description:"Forbidden"} }
+      }
+    },
+    "/appointments": {
+      post: {
+        security: [{ BearerAuth: [] }],
+        summary: "Book appointment (patient only)",
+        requestBody: { required:true, content:{"application/json": { schema: { $ref:"#/components/schemas/AppointmentRequest" } } } },
+        responses: { "201": { description:"Created" }, "400":{description:"Bad Request"} }
+      }
+    },
+    "/appointments/me": {
+      get: {
+        security: [{ BearerAuth: [] }],
+        summary: "My appointments (auto by role)",
+        responses: { "200": { description:"OK" }, "401": { description:"Unauthorized" } }
+      }
+    },
+    "/appointments/doctor/me": {
+      get: { security: [{ BearerAuth: [] }], summary: "Doctor's appointments", responses: { "200": { description:"OK" } } }
+    },
+    "/appointments/patient/me": {
+      get: { security: [{ BearerAuth: [] }], summary: "Patient's appointments", responses: { "200": { description:"OK" } } }
+    },
+    "/appointments/{id}/status": {
+      patch: {
+        security: [{ BearerAuth: [] }],
+        summary: "Update status (doctor only)",
+        parameters: [{ name:"id", in:"path", required:true, schema:{type:"string"} }],
+        requestBody: { required:true, content:{"application/json": { schema: { $ref:"#/components/schemas/UpdateApptStatusRequest" } } } },
+        responses: { "200": { description:"OK" }, "404":{description:"Not found"} }
+      }
+    },
+    "/specialties": {
+      get: { summary: "List specialties", responses: { "200": { description:"OK" } } }
+    },
+    "/reports/appointments/me": {
+      get: {
+        security: [{ BearerAuth: [] }],
+        summary: "My appointment summary (by date)",
+        parameters: [{ name:"date", in:"query", required:true, schema:{type:"string"}, example:"2025-08-27" }],
+        responses: {
+          "200": { description:"OK", content: {"application/json": { schema: { $ref:"#/components/schemas/ReportResponse" } } } },
+          "400": { description:"Bad Request", content: {"application/json": { schema: { $ref:"#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    }
+  }
+};
+
+// mount docs
+app.get("/docs.json", (_req, res) => res.json(openapiSpec));
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapiSpec));
+
 
 ///////////////////////////////
 // 10) ROUTES
@@ -864,35 +1134,32 @@ app.post(
 // ESCALATED LOGIN + IP BLOCK
 app.post(
   "/auth/login",
-  loginLimiter,
   asyncHandler(async (req, res) => {
-    // validate basic
+    // 1) validate
     const parsed = LoginSchema.safeParse(req.body || {});
     if (!parsed.success) return respondValidation(res, parsed.error);
     const { email, password } = parsed.data;
 
     const ip = getClientIp(req);
-    if (await isIpBlocked(ip)) {
-      return res
-        .status(429)
-        .json({ error: { code: "IP_BLOCKED", message: "จากการลองเข้าสู่ระบบมากเกินไป โปรดลองใหม่ภายหลัง" } });
-    }
 
-    // fetch user
+    // 2) ดึง user มาก่อน
     const [rows] = await pool.query(
       "SELECT id, role, email, full_name, password_hash, failed_login_attempts, lock_count, locked_until FROM users WHERE email = ? LIMIT 1",
       [email]
     );
     const user = rows[0];
 
+    const invalid = () =>
+      res.status(401).json({
+        error: { code: "INVALID_CREDENTIALS", message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" },
+      });
+
     if (!user) {
-      await new Promise((r) => setTimeout(r, 300)); // ชะลอบอทนิดหน่อย
-      return res
-        .status(401)
-        .json({ error: { code: "INVALID_CREDENTIALS", message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" } });
+      await new Promise((r) => setTimeout(r, 300)); // slow bot
+      return invalid();
     }
 
-    // account locked?
+    // 3) ถ้าบัญชีถูกล็อกอยู่ ให้บอกไปก่อน (ยังไม่ตรวจรหัส)
     if (user.locked_until) {
       const untilTs = new Date(user.locked_until).getTime();
       if (Date.now() < untilTs) {
@@ -903,49 +1170,59 @@ app.post(
       }
     }
 
-    // verify password
+    // 4) ตรวจรหัสผ่านก่อน แล้วค่อยตัดสิน block
     const ok = verifyPassword(password, user.password_hash);
-    if (!ok) {
-      const newFailed = (user.failed_login_attempts || 0) + 1;
-      await pool.query("UPDATE users SET failed_login_attempts = ? WHERE id = ?", [newFailed, user.id]);
 
-      if (newFailed >= 5) {
-        const currentLockCount = user.lock_count || 0;
-        const durationSec = getLockDurationSeconds(currentLockCount);
-        const until = new Date(Date.now() + durationSec * 1000);
-        await pool.query("UPDATE users SET locked_until = ?, lock_count = ? WHERE id = ?", [
-          until,
-          currentLockCount + 1,
-          user.id,
-        ]);
-        await blockIp(ip, durationSec);
-        return res.status(429).json({
-          error: {
-            code: "TOO_MANY_ATTEMPTS",
-            message: `ลองเข้าสู่ระบบมากเกินไป ระบบล็อกบัญชีเป็นเวลา ${Math.round(durationSec / 60)} นาที`,
-          },
-        });
-      }
+    if (ok) {
+      // ล็อกอินสำเร็จ → reset ทุกอย่าง และปลด IP block ถ้ามี
+      await pool.query(
+        "UPDATE users SET failed_login_attempts = 0, lock_count = 0, locked_until = NULL WHERE id = ?",
+        [user.id]
+      );
+      await unblockIp(ip);
 
-      return res
-        .status(401)
-        .json({ error: { code: "INVALID_CREDENTIALS", message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" } });
+      const token = issueJwt({ sub: user.id, role: user.role || "patient" }, "2h");
+      return res.json({
+        token,
+        user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role || "patient" },
+      });
     }
 
-    // success
-    await pool.query(
-      "UPDATE users SET failed_login_attempts = 0, lock_count = 0, locked_until = NULL WHERE id = ?",
-      [user.id]
-    );
-    await unblockIp(ip);
+    // 5) รหัสผิด → ตอนนี้ค่อยเช็คว่า IP โดน block อยู่ไหม
+    if (await isIpBlocked(ip)) {
+      return res
+        .status(429)
+        .json({ error: { code: "IP_BLOCKED", message: "จากการลองเข้าสู่ระบบมากเกินไป โปรดลองใหม่ภายหลัง" } });
+    }
 
-    const token = issueJwt({ sub: user.id, role: user.role || "patient" }, "2h");
-    return res.json({
-      token,
-      user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role || "patient" },
-    });
+    // เพิ่ม failed แล้วพิจารณา escalated lock
+    const newFailed = (user.failed_login_attempts || 0) + 1;
+    await pool.query("UPDATE users SET failed_login_attempts = ? WHERE id = ?", [newFailed, user.id]);
+
+    if (newFailed >= 5) {
+      const currentLockCount = user.lock_count || 0;
+      const durationSec = getLockDurationSeconds(currentLockCount);
+      const until = new Date(Date.now() + durationSec * 1000);
+
+      await pool.query("UPDATE users SET locked_until = ?, lock_count = ? WHERE id = ?", [
+        until,
+        currentLockCount + 1,
+        user.id,
+      ]);
+      await blockIp(ip, durationSec);
+
+      return res.status(429).json({
+        error: {
+          code: "TOO_MANY_ATTEMPTS",
+          message: `ลองเข้าสู่ระบบมากเกินไป ระบบล็อกบัญชีเป็นเวลา ${Math.round(durationSec / 60)} นาที`,
+        },
+      });
+    }
+
+    return invalid();
   })
 );
+
 
 // profile
 app.get(
@@ -969,36 +1246,48 @@ app.put(
 );
 
 // doctors
+// doctors
 app.get(
   "/doctors",
   asyncHandler(async (req, res) => {
-    // รองรับ alias ตามข้อสอบ: ?specialty= จะถูก map เป็น specialty_name
+    // ===== ALIAS HANDLING =====
+    // รองรับ ?specialty= ทั้ง 3 รูปแบบ:
+    // - เลขดิบ (เช่น 2)
+    // - id 36 ตัว (เช่น SPxxxxxxxx...)
+    // - ชื่อสาขา (string อื่นๆ)
     const q = { ...req.query };
     if (q.specialty && !q.specialty_name && !q.specialty_id) {
-      // ถ้ารูปแบบเป็น UUID/id ให้ map เป็น specialty_id
-      if (looksLikeId(q.specialty)) q.specialty_id = q.specialty;
-      else q.specialty_name = q.specialty;
+      const s = String(q.specialty).trim();
+      if (looksLikeId(s)) {
+        // UUID/รหัสยาว 36 ตัว
+        q.specialty_id = s;
+      } else if (isNumericId(s)) {
+        // id เป็นตัวเลข
+        q.specialty_id = Number(s);
+      } else {
+        // ถือเป็นชื่อ
+        q.specialty_name = s;
+      }
     }
-    
 
+    // ===== VALIDATE =====
     const parsed = SearchDoctorsQuery.safeParse(q);
     if (!parsed.success) return respondValidation(res, parsed.error);
 
+    // ===== QUERY =====
     const data = await searchDoctors(parsed.data);
     res.json({ data });
   })
 );
-
 
 app.post(
   "/doctors/:id/slots",
   requireAuth(["doctor"]),
   asyncHandler(async (req, res) => {
     if (req.params.id !== req.user.sub) {
-      return res
-        .status(403)
-        .json({ error: { code: "FORBIDDEN", message: "ไม่สามารถจัดการเวลาให้ผู้อื่นได้" } });
+      return res.status(403).json({ error: { code: "FORBIDDEN", message: "ไม่สามารถจัดการเวลาให้ผู้อื่นได้" } });
     }
+    
     const parsed = CreateSlotSchema.safeParse(req.body);
     if (!parsed.success) return respondValidation(res, parsed.error);
     const slot = await createDoctorSlot(req.user.sub, parsed.data.start_time, parsed.data.end_time);
@@ -1096,6 +1385,111 @@ app.get(
 const UpdateApptStatusSchema = z.object({
   status: z.enum(["pending", "confirmed", "rejected", "cancelled"], { message: "สถานะไม่ถูกต้อง" }),
 });
+
+// =========================== REPORTS (admin OR doctor) ===========================
+// GET /reports/appointments[?date=YYYY-MM-DD][&doctor_id=...]
+// - admin: เห็นทั้งระบบ หรือ zoom-in ด้วย doctor_id
+// - doctor: เห็นเฉพาะของตัวเอง (ห้ามส่ง doctor_id เป็นคนอื่น)
+app.get(
+  "/reports/appointments",
+  requireAuth(["admin", "doctor"]),
+  asyncHandler(async (req, res) => {
+    // parse
+    const parsed = ReportQuery.safeParse(req.query);
+    if (!parsed.success) return respondValidation(res, parsed.error);
+    const { date } = parsed.data || {};
+
+    const role = req.user.role === "admin" ? "admin" : "doctor";
+    const idCol = "doctor_id";
+
+    // scope
+    let scope = "system";
+    let doctorId = null;
+
+    if (role === "admin") {
+      if (req.query.doctor_id && String(req.query.doctor_id).length === 36) {
+        doctorId = String(req.query.doctor_id);
+        scope = "doctor";
+      }
+    } else {
+      scope = "doctor";
+      doctorId = req.user.sub;
+      if (req.query.doctor_id && req.query.doctor_id !== req.user.sub) {
+        return res.status(403).json({ error: { code: "FORBIDDEN", message: "ดูเฉพาะของตนเองเท่านั้น" } });
+      }
+    }
+
+    // เงื่อนไขหลัก
+    const where = [];
+    const params = [];
+    if (doctorId) { where.push(`${idCol} = ?`); params.push(doctorId); }
+    if (date)     { where.push(`chosen_date = ?`); params.push(date); }
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    // สรุปตามสถานะ
+    const [statRows] = await pool.query(
+      `SELECT status, COUNT(*) AS c
+       FROM appointments
+       ${whereSql}
+       GROUP BY status`
+    , params);
+
+    const by_status = { pending: 0, confirmed: 0, rejected: 0, cancelled: 0 };
+    for (const r of statRows) if (by_status.hasOwnProperty(r.status)) by_status[r.status] = Number(r.c) || 0;
+    const total = Object.values(by_status).reduce((a, b) => a + b, 0);
+
+    // trend 30 วันล่าสุด (ไม่สน date; ใช้วันนี้เป็นปลายทางเสมอ)
+    const pad = (n) => String(n).padStart(2, "0");
+    const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const end = new Date(); end.setHours(0,0,0,0);
+    const start = new Date(end.getTime() - 29 * 24 * 60 * 60 * 1000);
+    const startY = ymd(start), endY = ymd(end);
+
+    const trendParams = [startY, endY];
+    let trendWhere = "chosen_date BETWEEN ? AND ?";
+    if (doctorId) { trendWhere += " AND doctor_id = ?"; trendParams.push(doctorId); }
+
+    const [trendRows] = await pool.query(
+      `SELECT DATE_FORMAT(chosen_date, '%Y-%m-%d') AS d, COUNT(*) AS c
+       FROM appointments
+       WHERE ${trendWhere}
+       GROUP BY d
+       ORDER BY d ASC`,
+      trendParams
+    );
+    const map = new Map(trendRows.map(r => [r.d, Number(r.c)]));
+    const recent_30_days = [];
+    for (let i = 0; i < 30; i++) {
+      const day = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
+      const k = ymd(day);
+      recent_30_days.push({ date: k, total: map.get(k) || 0 });
+    }
+
+    // upcoming ที่ยืนยันแล้ว
+    const upParams = [];
+    let upWhere = "status = 'confirmed' AND chosen_date >= CURDATE()";
+    if (doctorId) { upWhere += " AND doctor_id = ?"; upParams.push(doctorId); }
+    const [upRows] = await pool.query(
+      `SELECT COUNT(*) AS c, MIN(chosen_date) AS next_date
+       FROM appointments
+       WHERE ${upWhere}`,
+      upParams
+    );
+    const upcoming = { count: Number(upRows[0]?.c || 0), next_date: upRows[0]?.next_date || null };
+
+    res.json({
+      scope,              // "system" | "doctor"
+      doctor_id: doctorId || null,
+      window: date ? { type: "daily", date } : { type: "all" },
+      total,
+      by_status,
+      trend_30d: recent_30_days,
+      upcoming
+    });
+  })
+);
+
+
 ///////////////////////////////
 // 11) GLOBAL ERROR HANDLER
 ///////////////////////////////
