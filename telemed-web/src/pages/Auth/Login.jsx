@@ -114,7 +114,7 @@ export default function Login() {
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState("");
-  const [rememberMe, setRememberMe] = useState(false); // New state for "Remember Me"
+  const [rememberMe, setRememberMe] = useState(true); // ✅ แก้ไขตรงนี้ให้เป็นค่าเริ่มต้น true
   const navigate = useNavigate();
 
   const LOGIN_BASE = import.meta.env.VITE_API_URL || "http://localhost:4005";
@@ -269,7 +269,7 @@ export default function Login() {
                       </InputAdornment>
                     )
                   }}
-                  sx={{ mb: 2 }} // Adjusted margin to add a gap before the checkbox
+                  sx={{ mb: 2 }}
                 />
 
                 <FormControlLabel

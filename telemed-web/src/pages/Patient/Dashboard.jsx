@@ -47,9 +47,10 @@ function statusChip(status) {
         />
       );
     case "cancelled":
+    case "rejected": // ✅ เพิ่ม case 'rejected'
       return (
         <Chip
-          label="cancelled"
+          label={status} // ✅ ใช้ status ที่ส่งมาเป็น label
           size="small"
           sx={{ bgcolor: "#FFF1F2", color: "#7F1D1D" }}
         />
