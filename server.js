@@ -25,34 +25,35 @@ import fs from "fs";
 import path from "path";
 import multer from "multer";
 import { fileURLToPath } from "url";
+import dotenv from 'dotenv';
 
-
+dotenv.config();
 ///////////////////////////////
 // 2) CONFIG / ENV
 ///////////////////////////////
 const env = {
-  PORT: process.env.PORT || 4005,
-  DB_HOST: process.env.DB_HOST || "localhost",
-  DB_PORT: Number(process.env.DB_PORT || 3306),
-  DB_USER: process.env.DB_USER || "root",
-  DB_PASSWORD: process.env.DB_PASSWORD || "1234",
-  DB_NAME: process.env.DB_NAME || "telemedicinedb",
-  JWT_SECRET: process.env.JWT_SECRET || "change-me-very-secret",
-  REDIS_URL: process.env.REDIS_URL || "",
+  PORT: process.env.PORT,
+  DB_HOST: process.env.DB_HOST ,
+  DB_PORT: process.env.DB_PORT,
+  DB_USER: process.env.DB_USER,
+  DB_PASSWORD: process.env.DB_PASS,
+  DB_NAME: process.env.DB_NAME,
+  JWT_SECRET: process.env.JWT_SECRET,
+  REDIS_URL: process.env.REDIS_URL,
 };
 
 ///////////////////////////////
 // 3) DB POOL
 ///////////////////////////////
 const pool = mysql.createPool({
-  host: env.DB_HOST,
-  port: env.DB_PORT,
-  user: env.DB_USER,
-  password: env.DB_PASSWORD,
-  database: env.DB_NAME,
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
   connectionLimit: 10,
-  waitForConnections: true,
 });
+
 
 ///////////////////////////////
 // 4) EXPRESS APP + MIDDLEWARE

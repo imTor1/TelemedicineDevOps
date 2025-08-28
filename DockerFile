@@ -1,18 +1,15 @@
 #DockerFile
 FROM node:20-alpine
 
-# ติดตั้ง curl สำหรับ healthcheck
 RUN apk add --no-cache curl
 
 WORKDIR /app
 
-# ควรมี .dockerignore กัน node_modules ออก
 COPY package*.json ./
 
 # ติดตั้ง dependencies แบบ reproducible
 RUN npm ci --only=production
 
-# คัดลอกซอร์สโค้ดที่เหลือ
 COPY . .
 
 # สร้าง user ไม่ใช่ root และโอนสิทธิ์ให้เขียน/อ่านได้
