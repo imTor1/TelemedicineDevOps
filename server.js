@@ -120,7 +120,7 @@ const UPLOAD_DIR = path.resolve(__dirname, "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ก่อน app.use("/uploads", express.static(UPLOAD_DIR));
-app.use("/uploads", (req, res, next) => {
+app.use("/api/uploads", (req, res, next) => {
   // Allow fetch/embed from any origin
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
@@ -1269,7 +1269,7 @@ app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapiSpec));
 ///////////////////////////////
 
 // healthcheck
-app.get("/health", (req, res) => {
+app.get("/api/health", (req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
@@ -1301,7 +1301,7 @@ app.post(
 
 // ESCALATED LOGIN + IP BLOCK
 app.post(
-  "/auth/login",
+  "/api/auth/login",
   asyncHandler(async (req, res) => {
     // 1) validate
     const parsed = LoginSchema.safeParse(req.body || {});
@@ -1393,7 +1393,7 @@ app.post(
 
 // แทน handler เดิมของ /users/me ด้วยโค้ดนี้
 app.get(
-  "/users/me",
+  "/api/users/me",
   requireAuth(),
   asyncHandler(async (req, res) => {
     const user = await getUserProfile(req.user.sub);
@@ -1419,7 +1419,7 @@ app.get(
 
 
 app.put(
-  "/users/me",
+  "/api/users/me",
   requireAuth(),
   upload.single("userpic"),
   asyncHandler(async (req, res) => {
@@ -1461,7 +1461,7 @@ app.put(
 
 // doctors
 app.get(
-  "/doctors",
+  "/api/doctors",
   asyncHandler(async (req, res) => {
     // ===== ALIAS HANDLING =====
     // รองรับ ?specialty= ทั้ง 3 รูปแบบ:
@@ -1494,7 +1494,7 @@ app.get(
 );
 
 app.post(
-  "/doctors/:id/slots",
+  "/api/doctors/:id/slots",
   requireAuth(["doctor"]),
   asyncHandler(async (req, res) => {
     if (req.params.id !== req.user.sub) {
@@ -1509,7 +1509,7 @@ app.post(
 );
 
 app.get(
-  "/doctors/:id/slots",
+  "/api/doctors/:id/slots",
   asyncHandler(async (req, res) => {
     const parsed = ListSlotsQuery.safeParse(req.query);
     if (!parsed.success) return respondValidation(res, parsed.error);
@@ -1520,7 +1520,7 @@ app.get(
 
 // appointments
 app.post(
-  "/appointments",
+  "/api/appointments",
   requireAuth(["patient"]),
   asyncHandler(async (req, res) => {
     const parsed = BookSchema.safeParse(req.body);
@@ -1532,7 +1532,7 @@ app.post(
 );
 
 app.patch(
-  "/appointments/:id/status",
+  "/api/appointments/:id/status",
   requireAuth(["doctor"]),
   asyncHandler(async (req, res) => {
     const apptId = req.params.id;
@@ -1559,7 +1559,7 @@ app.patch(
 );
 
 app.get(
-  "/appointments/me",
+  "/api/appointments/me",
   requireAuth(),
   asyncHandler(async (req, res) => {
     const list = await listAppointmentsForUser(req.user.sub, req.user.role);
@@ -1569,7 +1569,7 @@ app.get(
 
 // เพิ่ม alias ให้ตรงข้อสอบ
 app.get(
-  "/appointments/doctor/me",
+  "/api/appointments/doctor/me",
   requireAuth(["doctor"]),
   asyncHandler(async (req, res) => {
     const list = await listAppointmentsForUser(req.user.sub, "doctor");
@@ -1578,7 +1578,7 @@ app.get(
 );
 
 app.get(
-  "/appointments/patient/me",
+  "/api/appointments/patient/me",
   requireAuth(["patient"]),
   asyncHandler(async (req, res) => {
     const list = await listAppointmentsForUser(req.user.sub, "patient");
@@ -1588,7 +1588,7 @@ app.get(
 
 // GET /specialties - คืนรายการ specialties ทั้งหมด
 app.get(
-  "/specialties",
+  "/api/specialties",
   asyncHandler(async (req, res) => {
     const [rows] = await pool.query("SELECT id, name FROM specialties ORDER BY name ASC");
     res.json({ data: rows });
@@ -1604,7 +1604,7 @@ const UpdateApptStatusSchema = z.object({
 // - admin: เห็นทั้งระบบ หรือ zoom-in ด้วย doctor_id
 // - doctor: เห็นเฉพาะของตัวเอง (ห้ามส่ง doctor_id เป็นคนอื่น)
 app.get(
-  "/reports/appointments",
+  "/api/reports/appointments",
   requireAuth(["admin", "doctor"]),
   asyncHandler(async (req, res) => {
     // parse

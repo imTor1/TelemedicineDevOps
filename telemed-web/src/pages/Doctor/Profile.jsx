@@ -11,7 +11,8 @@ import CloseIcon from "@mui/icons-material/Close";
 import PhotoCameraIcon from "@mui/icons-material/PhotoCamera";
 import api from "../../lib/api";
 
-const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:4005").replace(/\/+$/,"");
+const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:4005/api").replace(/\/+$/,"");
+
 
 export default function DoctorProfile() {
   const [loading, setLoading] = useState(true);

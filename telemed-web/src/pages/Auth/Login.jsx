@@ -117,7 +117,7 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(true); // ✅ แก้ไขตรงนี้ให้เป็นค่าเริ่มต้น true
   const navigate = useNavigate();
 
-  const LOGIN_BASE = import.meta.env.VITE_API_URL || "http://localhost:4005";
+  const LOGIN_BASE = import.meta.env.VITE_API_URL || "http://localhost:4005/api";
   const LOGIN_URL = `${LOGIN_BASE}/auth/login`;
   const WHOAMI_URL = `${LOGIN_BASE}/auth/me`;
 
