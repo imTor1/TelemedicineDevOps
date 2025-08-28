@@ -1,0 +1,49 @@
+#docker compose
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: my-node-app
+    environment:
+      - NODE_ENV=production
+      - PORT=4005
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_NAME=medicare
+      - DB_USER=medicare_user
+      - DB_PASS=supersecret
+    ports:
+      - "4005:4005"                # host:container
+    working_dir: /app
+    command: ["node", "server.js"] # หรือ ["npm","start"]
+    depends_on:
+      db:
+        condition: service_healthy  # รอจน db health OK
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    container_name: my-mysql
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      - MYSQL_DATABASE=medicare
+      - MYSQL_USER=medicare_user
+      - MYSQL_PASSWORD=supersecret
+      - MYSQL_ROOT_PASSWORD=rootsecret
+    ports:
+      - "3306:3306" # ใช้เฉพาะตอน dev; prod ควรถอดทิ้ง
+    volumes:
+      - db_data:/var/lib/mysql
+      # - ./db-init:/docker-entrypoint-initdb.d:ro  # ถ้ามีสคริปต์ init
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootsecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  db_data:
