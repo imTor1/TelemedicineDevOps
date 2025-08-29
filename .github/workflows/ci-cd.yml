@@ -116,7 +116,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           source: |
-            docker-compose.prod.yml
+            docker-compose.yml
             db/init/**
           target: "~/app"
 
