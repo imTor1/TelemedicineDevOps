@@ -7,7 +7,6 @@ on:
     tags:
       - 'v*.*.*'
 
-# ใช้ได้หรือจะลบออกก็ได้ (ด้านล่างเราใช้ ghcr.io ตรง ๆ)
 env:
   REGISTRY: ghcr.io
 
@@ -101,101 +100,101 @@ jobs:
           labels: ${{ steps.meta_web.outputs.labels }}
 
   # ---------- Deploy to EC2 via Docker Compose ----------
-  deploy:
-    if: github.event_name == 'push'
-    needs: docker
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  # deploy:
+  #   if: github.event_name == 'push'
+  #   needs: docker
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Copy compose (prod)
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          source: docker-compose.prod.yml
-          target: "~/app"
+  #     - name: Copy compose (prod)
+  #       uses: appleboy/scp-action@v0.1.7
+  #       with:
+  #         host: ${{ secrets.SSH_HOST }}
+  #         username: ${{ secrets.SSH_USER }}
+  #         key: ${{ secrets.SSH_KEY }}
+  #         source: docker-compose.prod.yml
+  #         target: "~/app"
 
-      - name: Copy db init (if present)
-        if: ${{ hashFiles('db/init/**') != '' }}
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          source: db/init/**
-          target: "~/app/db/init"
+  #     - name: Copy db init (if present)
+  #       if: ${{ hashFiles('db/init/**') != '' }}
+  #       uses: appleboy/scp-action@v0.1.7
+  #       with:
+  #         host: ${{ secrets.SSH_HOST }}
+  #         username: ${{ secrets.SSH_USER }}
+  #         key: ${{ secrets.SSH_KEY }}
+  #         source: db/init/**
+  #         target: "~/app/db/init"
 
 
-      # (ตัวเลือก) สร้างไฟล์ .env บนเครื่องปลายทางจาก Secrets
-      - name: Write .env on server (optional)
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          script: |
-            mkdir -p ~/app
-            cat > ~/app/.env <<'EOF'
-            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
-            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
-            EOF
+  #     # (ตัวเลือก) สร้างไฟล์ .env บนเครื่องปลายทางจาก Secrets
+  #     - name: Write .env on server (optional)
+  #       uses: appleboy/ssh-action@v1.2.0
+  #       with:
+  #         host: ${{ secrets.SSH_HOST }}
+  #         username: ${{ secrets.SSH_USER }}
+  #         key: ${{ secrets.SSH_KEY }}
+  #         script: |
+  #           mkdir -p ~/app
+  #           cat > ~/app/.env <<'EOF'
+  #           MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+  #           MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+  #           EOF
 
-      - name: Deploy with compose
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_PAT,GITHUB_ACTOR
-          script: |
-            set -euo pipefail
+  #     - name: Deploy with compose
+  #       uses: appleboy/ssh-action@v1.2.0
+  #       with:
+  #         host: ${{ secrets.SSH_HOST }}
+  #         username: ${{ secrets.SSH_USER }}
+  #         key: ${{ secrets.SSH_KEY }}
+  #         envs: GHCR_PAT,GITHUB_ACTOR
+  #         script: |
+  #           set -euo pipefail
 
-            # ensure docker installed
-            if ! command -v docker >/dev/null 2>&1; then
-              sudo apt-get update -y
-              sudo apt-get install -y ca-certificates curl gnupg lsb-release
-              sudo install -m 0755 -d /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/$(. /etc/os-release; echo "$ID")/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(. /etc/os-release; echo "$ID") $(lsb_release -cs) stable" \
-                | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-              sudo apt-get update -y
-              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-            fi
+  #           # ensure docker installed
+  #           if ! command -v docker >/dev/null 2>&1; then
+  #             sudo apt-get update -y
+  #             sudo apt-get install -y ca-certificates curl gnupg lsb-release
+  #             sudo install -m 0755 -d /etc/apt/keyrings
+  #             curl -fsSL https://download.docker.com/linux/$(. /etc/os-release; echo "$ID")/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  #             echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(. /etc/os-release; echo "$ID") $(lsb_release -cs) stable" \
+  #               | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  #             sudo apt-get update -y
+  #             sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  #           fi
 
-            sudo systemctl enable --now docker
-            DOCKER="sudo docker"
+  #           sudo systemctl enable --now docker
+  #           DOCKER="sudo docker"
 
-            # login GHCR (ถ้าแพ็กเกจเป็น private)
-            if [ -n "${GHCR_PAT:-}" ]; then
-              echo "$GHCR_PAT" | $DOCKER login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin
-            fi
+  #           # login GHCR (ถ้าแพ็กเกจเป็น private)
+  #           if [ -n "${GHCR_PAT:-}" ]; then
+  #             echo "$GHCR_PAT" | $DOCKER login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin
+  #           fi
 
-            cd ~/app
-            # ใช้ .env ถ้ามี (มีหรือไม่มีก็ทำงานได้ เพราะ compose ใส่ default ไว้แล้ว)
-            if [ -f .env ]; then
-              $DOCKER compose --env-file .env -f docker-compose.prod.yml pull
-              $DOCKER compose --env-file .env -f docker-compose.prod.yml up -d
-            else
-              $DOCKER compose -f docker-compose.yml pull
-              $DOCKER compose -f docker-compose.yml up -d
-            fi
+  #           cd ~/app
+  #           # ใช้ .env ถ้ามี (มีหรือไม่มีก็ทำงานได้ เพราะ compose ใส่ default ไว้แล้ว)
+  #           if [ -f .env ]; then
+  #             $DOCKER compose --env-file .env -f docker-compose.prod.yml pull
+  #             $DOCKER compose --env-file .env -f docker-compose.prod.yml up -d
+  #           else
+  #             $DOCKER compose -f docker-compose.yml pull
+  #             $DOCKER compose -f docker-compose.yml up -d
+  #           fi
 
-            $DOCKER image prune -f
+  #           $DOCKER image prune -f
 
   # ---------- Optional: Post-Deploy Integration Test ----------
-  post-deploy-test:
-    if: github.event_name == 'push'
-    needs: deploy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for service to be ready
-        run: |
-          for i in {1..30}; do
-            if curl -fsS "${{ secrets.APP_URL }}/api/health" | grep -q '"ok":true'; then
-              echo "Service healthy"; exit 0
-            fi
-            echo "Waiting... ($i)"; sleep 5
-          done
-          echo "Service NOT healthy"; exit 1
+  # post-deploy-test:
+  #   if: github.event_name == 'push'
+  #   needs: deploy
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Wait for service to be ready
+  #       run: |
+  #         for i in {1..30}; do
+  #           if curl -fsS "${{ secrets.APP_URL }}/api/health" | grep -q '"ok":true'; then
+  #             echo "Service healthy"; exit 0
+  #           fi
+  #           echo "Waiting... ($i)"; sleep 5
+  #         done
+  #         echo "Service NOT healthy"; exit 1
