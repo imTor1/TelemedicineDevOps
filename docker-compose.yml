@@ -19,11 +19,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   server:
     build:
       context: .
-      dockerfile: DockerFile
+      dockerfile: DockerFile  
     container_name: medicare-server
     depends_on:
       db:
@@ -34,11 +35,24 @@ services:
       DB_HOST: db
       DB_PORT: "3306"
       DB_NAME: telemedicinedb
-      DB_USER: medicare_user    
-      DB_PASS: 1234              
+      DB_USER: medicare_user
+      DB_PASS: 1234        
       TZ: Asia/Bangkok
     ports:
-      - "4005:4005"
+      - "80:4005"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./telemed-web
+      dockerfile: DockerFile   
+      args:
+        VITE_API_URL: /api
+    depends_on:
+      - server         
+    ports:
+      - "8080:80"
+    restart: unless-stopped
 
 volumes:
   db_data:

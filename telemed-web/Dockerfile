@@ -6,12 +6,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-# คัดลอกซอร์ส (ยกเว้นของที่ .dockerignore ไว้)
 COPY . .
 
-# ตั้งค่า ENV (build-time) สำหรับ Vite (แก้ให้ตรงของคุณ)
-# ตัวอย่าง: ใช้ URL ของ backend ภายใน docker compose
-ARG VITE_API_URL=http://localhost:3000
+ARG VITE_API_URL=http://localhost:4005
 ENV VITE_API_URL=$VITE_API_URL
 
 # build ออกมาเป็น /app/dist

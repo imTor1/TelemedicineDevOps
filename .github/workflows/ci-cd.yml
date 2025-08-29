@@ -9,19 +9,18 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # owner/repo
+  IMAGE_NAME: ${{ github.repository }}
 
 concurrency:
   group: "deploy-${{ github.ref }}"
   cancel-in-progress: true
 
 jobs:
-  # ------- CI -------
+  # ------- CI (1 & 2) -------
   ci:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -35,24 +34,27 @@ jobs:
       - name: Lint
         run: npm run lint --if-present
 
-      - name: Test
+      - name: Unit tests
         run: npm test --if-present
 
       - name: Build (optional)
         run: npm run build --if-present
 
-  # ------- Build & Push Docker image (เฉพาะ push) -------
+  # ------- Build & Push Docker image (3) -------
   docker:
     if: github.event_name == 'push'
     needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write     # push ไป GHCR
-      id-token: write
+      packages: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Ensure lowercased image name (for GHCR)
+        run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> $GITHUB_ENV
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -65,11 +67,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           tags: |
-            type=ref,event=branch         # :main, :feature-x
-            type=sha                      # :sha-xxxxxxxx
-            type=semver,pattern={{version}}  # :v1.2.3 (ตอน push tag)
+            type=ref,event=branch
+            type=sha
+            type=semver,pattern={{version}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -80,31 +82,19 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # ------- Deploy (Docker Compose ผ่าน SSH, เฉพาะ main) -------
+  # ------- Deploy (Docker Compose via SSH) (4) -------
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push'
     needs: docker
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy via SSH (docker compose)
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Copy compose files
+        uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
-          port: ${{ secrets.DEPLOY_PORT }}
-          script_stop: true
-          script: |
-            set -e
-            # โฟลเดอร์แอปบนเซิร์ฟเวอร์ (ต้องมี docker-compose.prod.yml + .env)
-            cd /opt/myapp
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "docker-compose.yml,.env"
+          target: "~/app"
 
-            # login GHCR ด้วย GitHub Token
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-
-            # ดึง image ล่าสุดตาม tag ของ branch main (ใช้ :main หรือ :sha-xxx ก็ได้)
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
-
-            # เก็บบ้านให้สะอาด
-            docker system prune -f
+      - name: SSH deploy on EC2 (with v2/v1 fallback)
