@@ -84,37 +84,37 @@ jobs:
 
   # ---------- (4) Deploy to EC2 via Docker Compose ----------
   deploy:
-  if: github.event_name == 'push'
-  needs: docker
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
+    if: github.event_name == 'push'
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    - name: Copy compose file
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.SSH_HOST }}
-        username: ${{ secrets.SSH_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        source: |
-          docker-compose.yml
-        target: "~/app"
+      - name: Copy compose file
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: |
+            docker-compose.yml
+          target: "~/app"
 
-    - name: Deploy with compose
-      uses: appleboy/ssh-action@v1.2.0
-      with:
-        host: ${{ secrets.SSH_HOST }}
-        username: ${{ secrets.SSH_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        script: |
-          set -e
-          cd ~/app
-          if [ -n "${{ secrets.GHCR_PAT }}" ]; then
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          fi
-          docker compose pull || docker-compose pull
-          docker compose up -d || docker-compose up -d
-          docker image prune -f
+      - name: Deploy with compose
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+            cd ~/app
+            if [ -n "${{ secrets.GHCR_PAT }}" ]; then
+              echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            fi
+            docker compose pull || docker-compose pull
+            docker compose up -d || docker-compose up -d
+            docker image prune -f
 
   # ---------- (5) Optional: Post-Deploy Integration Test ----------
   post-deploy-test:
