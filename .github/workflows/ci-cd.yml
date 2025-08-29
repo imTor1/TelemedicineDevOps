@@ -93,7 +93,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./telemed-web
-          file: ./telemed-web/DockerFile
+          file: ./telemed-web/Dockerfile
           push: true
           build-args: |
             VITE_API_URL=/api
