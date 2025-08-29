@@ -175,8 +175,8 @@ jobs:
             cd ~/app
             # ใช้ .env ถ้ามี (มีหรือไม่มีก็ทำงานได้ เพราะ compose ใส่ default ไว้แล้ว)
             if [ -f .env ]; then
-              $DOCKER compose --env-file .env -f docker-compose.yml pull
-              $DOCKER compose --env-file .env -f docker-compose.yml up -d
+              $DOCKER compose --env-file .env -f docker-compose.prod.yml pull
+              $DOCKER compose --env-file .env -f docker-compose.prod.yml up -d
             else
               $DOCKER compose -f docker-compose.yml pull
               $DOCKER compose -f docker-compose.yml up -d

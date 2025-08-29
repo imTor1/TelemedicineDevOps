@@ -37,11 +37,11 @@ services:
       retries: 12
     restart: unless-stopped
 
-  web:
-    image: ghcr.io/imtor1/telemedicinedevops-web:main
-    depends_on: { server: { condition: service_healthy } }
-    ports: ["80:80"]
-    restart: unless-stopped
+  # web:
+  #   image: ghcr.io/imtor1/telemedicinedevops-web:main
+  #   depends_on: { server: { condition: service_healthy } }
+  #   ports: ["80:80"]
+  #   restart: unless-stopped
 
 volumes:
   db_data:
