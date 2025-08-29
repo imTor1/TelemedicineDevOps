@@ -106,15 +106,64 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+
+          envs: GHCR_PAT,GITHUB_ACTOR
+
           script: |
             set -e
             cd ~/app
             if [ -n "${{ secrets.GHCR_PAT }}" ]; then
               echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             fi
-            docker compose pull || docker-compose pull
-            docker compose up -d || docker-compose up -d
+            set -euo pipefail
+            echo "== Check & install Docker =="
+            if ! command -v docker >/dev/null 2>&1; then
+              # Install Docker CE + compose plugin
+              sudo apt-get update -y
+              sudo apt-get install -y ca-certificates curl gnupg lsb-release
+              sudo install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/$(. /etc/os-release; echo "$ID")/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              echo \
+                "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(. /etc/os-release; echo "$ID") \
+                $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+              sudo apt-get update -y
+              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            fi
+
+            echo "== Enable & start docker =="
+            sudo systemctl enable --now docker
+
+            echo "== Who am I and groups =="
+            id
+            # ถ้าไม่ใช่ root ให้เพิ่ม user นี้เข้ากลุ่ม docker (เพื่อใช้ docker โดยไม่ต้อง sudo ครั้งต่อไป)
+            if ! groups | grep -q "\bdocker\b"; then
+              sudo usermod -aG docker "$USER" || true
+              echo ">> Added $USER to docker group (ต้อง re-login รอบหน้าเพื่อมีผล)"
+            fi
+
+            echo "== Check daemon =="
+            sudo systemctl status docker --no-pager || true
+            docker version
+            docker info | sed -n '1,40p'
+
+            echo "== Login GHCR (ถ้าภาพ private) =="
+            if [ -n "${GHCR_PAT:-}" ]; then
+              echo "$GHCR_PAT" | docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin
+            fi
+
+            echo "== Go to app folder & pull/up =="
+            mkdir -p ~/app
+            cd ~/app
+
+            docker compose pull
+            docker compose up -d
+
+            echo "== Prune old images =="
             docker image prune -f
+
+            sudo docker compose pull || docker-compose pull
+            sudo docker compose up -d || docker-compose up -d
+            sudo docker image prune -f
 
   # ---------- Optional: Post-Deploy Integration Test ----------
   post-deploy-test:
