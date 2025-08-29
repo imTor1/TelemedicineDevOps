@@ -77,7 +77,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile           # <— ชื่อไฟล์ต้องตรง: Dockerfile (ไม่ใช่ DockerFile)
+          file: ./DockerFile           # <— ชื่อไฟล์ต้องตรง: Dockerfile (ไม่ใช่ DockerFile)
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
