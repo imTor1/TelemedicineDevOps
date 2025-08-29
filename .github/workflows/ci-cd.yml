@@ -16,12 +16,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ------- CI -------
+  # ---------- (1)-(2) CI ----------
   ci:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -35,24 +34,27 @@ jobs:
       - name: Lint
         run: npm run lint --if-present
 
-      - name: Test
+      - name: Unit tests
         run: npm test --if-present
 
       - name: Build (optional)
         run: npm run build --if-present
 
-  # ------- Build & Push Docker image -------
+  # ---------- (3) Build & Push Docker to GHCR ----------
   docker:
     if: github.event_name == 'push'
     needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write     # push ไป GHCR
-      id-token: write
+      packages: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Ensure lowercased image name (for GHCR)
+        run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> $GITHUB_ENV
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -65,67 +67,68 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           tags: |
-            type=ref,event=branch         # :main, :feature-x
-            type=sha                      # :sha-xxxxxxxx
-            type=semver,pattern={{version}}  # :v1.2.3 (ตอน push tag)
+            type=ref,event=branch
+            type=sha
+            type=semver,pattern={{version}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./DockerFile
+          file: ./Dockerfile           # <— ชื่อไฟล์ต้องตรง: Dockerfile (ไม่ใช่ DockerFile)
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # ------- Deploy (Docker Compose ผ่าน SSH, เฉพาะ main) -------
-    deploy:
-      if: github.event_name == 'push'
-      needs: docker
-      runs-on: ubuntu-latest
-      steps:
-        - name: Copy compose files
-          uses: appleboy/scp-action@v0.1.7
-          with:
-            host: ${{ secrets.SSH_HOST }}
-            username: ${{ secrets.SSH_USER }}
-            key: ${{ secrets.SSH_KEY }}
-            source: "docker-compose.yml,.env" 
-            target: "~/app"
+  # ---------- (4) Deploy to EC2 via Docker Compose ----------
+  deploy:
+    if: github.event_name == 'push'
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy compose files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "docker-compose.yml,.env"
+          target: "~/app"
 
-        - name: SSH deploy on EC2
-          uses: appleboy/ssh-action@v1.2.0
-          with:
-            host: ${{ secrets.SSH_HOST }}
-            username: ${{ secrets.SSH_USER }}
-            key: ${{ secrets.SSH_KEY }}
-            script: |
-              set -e
-              cd ~/app
-              # ถ้า GHCR เป็น private ให้ login (ถ้า public ข้ามได้)
-              if [ -n "${{ secrets.GHCR_PAT }}" ]; then
-                echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-              fi
-              docker compose pull
-              docker compose up -d
-              docker image prune -f
+      - name: SSH deploy on EC2 (v2/v1 compose fallback)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+            cd ~/app
+            # login GHCR ถ้า image เป็น private (ถ้า public ข้ามได้)
+            if [ -n "${{ secrets.GHCR_PAT }}" ]; then
+              echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            fi
+            # compose v2 หรือ v1
+            docker compose pull || docker-compose pull
+            docker compose up -d || docker-compose up -d
+            docker image prune -f
 
-
-    post-deploy-test:
-        if: github.event_name == 'push'
-        needs: deploy
-        runs-on: ubuntu-latest
-        steps:
-          - name: Wait for service to be ready
-            run: |
-              for i in {1..30}; do
-                if curl -fsS "${{ secrets.APP_URL }}/api/health" | grep -q '"ok":true'; then
-                  echo "Service healthy"
-                  exit 0
-                fi
-                echo "Waiting... ($i)"
-                sleep 5
-              done
-              echo "Service NOT healthy" && exit 1
+  # ---------- (5) Optional: Post-Deploy Integration Test ----------
+  post-deploy-test:
+    if: github.event_name == 'push'
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for service to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -fsS "${{ secrets.APP_URL }}/api/health" | grep -q '"ok":true'; then
+              echo "Service healthy"
+              exit 0
+            fi
+            echo "Waiting... ($i)"
+            sleep 5
+          done
+          echo "Service NOT healthy" && exit 1
