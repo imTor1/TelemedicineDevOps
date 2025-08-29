@@ -9,14 +9,14 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # owner/repo
+  IMAGE_NAME: ${{ github.repository }}
 
 concurrency:
   group: "deploy-${{ github.ref }}"
   cancel-in-progress: true
 
 jobs:
-  # ---------- (1)-(2) CI ----------
+  # ---------- CI ----------
   ci:
     runs-on: ubuntu-latest
     steps:
@@ -40,7 +40,7 @@ jobs:
       - name: Build (optional)
         run: npm run build --if-present
 
-  # ---------- (3) Build & Push Docker to GHCR ----------
+  # ---------- Build & Push Docker to GHCR ----------
   docker:
     if: github.event_name == 'push'
     needs: ci
@@ -82,7 +82,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # ---------- (4) Deploy to EC2 via Docker Compose ----------
+  # ---------- Deploy to EC2 via Docker Compose ----------
   deploy:
     if: github.event_name == 'push'
     needs: docker
@@ -116,7 +116,7 @@ jobs:
             docker compose up -d || docker-compose up -d
             docker image prune -f
 
-  # ---------- (5) Optional: Post-Deploy Integration Test ----------
+  # ---------- Optional: Post-Deploy Integration Test ----------
   post-deploy-test:
     if: github.event_name == 'push'
     needs: deploy
