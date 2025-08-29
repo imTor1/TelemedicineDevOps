@@ -9,18 +9,19 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository }} # owner/repo
 
 concurrency:
   group: "deploy-${{ github.ref }}"
   cancel-in-progress: true
 
 jobs:
-  # ------- CI (1 & 2) -------
+  # ------- CI -------
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -34,27 +35,24 @@ jobs:
       - name: Lint
         run: npm run lint --if-present
 
-      - name: Unit tests
+      - name: Test
         run: npm test --if-present
 
       - name: Build (optional)
         run: npm run build --if-present
 
-  # ------- Build & Push Docker image (3) -------
+  # ------- Build & Push Docker image -------
   docker:
     if: github.event_name == 'push'
     needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write     # push ไป GHCR
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Ensure lowercased image name (for GHCR)
-        run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> $GITHUB_ENV
-
-      - uses: docker/setup-buildx-action@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -67,11 +65,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=sha
-            type=semver,pattern={{version}}
+            type=ref,event=branch         # :main, :feature-x
+            type=sha                      # :sha-xxxxxxxx
+            type=semver,pattern={{version}}  # :v1.2.3 (ตอน push tag)
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -82,19 +80,52 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # ------- Deploy (Docker Compose via SSH) (4) -------
-  deploy:
-    if: github.event_name == 'push'
-    needs: docker
-    runs-on: ubuntu-latest
-    steps:
-      - name: Copy compose files
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          source: "docker-compose.yml,.env"
-          target: "~/app"
+  # ------- Deploy (Docker Compose ผ่าน SSH, เฉพาะ main) -------
+    deploy:
+      if: github.event_name == 'push'
+      needs: docker
+      runs-on: ubuntu-latest
+      steps:
+        - name: Copy compose files
+          uses: appleboy/scp-action@v0.1.7
+          with:
+            host: ${{ secrets.SSH_HOST }}
+            username: ${{ secrets.SSH_USER }}
+            key: ${{ secrets.SSH_KEY }}
+            source: "docker-compose.yml,.env" 
+            target: "~/app"
 
-      - name: SSH deploy on EC2 (with v2/v1 fallback)
+        - name: SSH deploy on EC2
+          uses: appleboy/ssh-action@v1.2.0
+          with:
+            host: ${{ secrets.SSH_HOST }}
+            username: ${{ secrets.SSH_USER }}
+            key: ${{ secrets.SSH_KEY }}
+            script: |
+              set -e
+              cd ~/app
+              # ถ้า GHCR เป็น private ให้ login (ถ้า public ข้ามได้)
+              if [ -n "${{ secrets.GHCR_PAT }}" ]; then
+                echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+              fi
+              docker compose pull
+              docker compose up -d
+              docker image prune -f
+
+
+    post-deploy-test:
+        if: github.event_name == 'push'
+        needs: deploy
+        runs-on: ubuntu-latest
+        steps:
+          - name: Wait for service to be ready
+            run: |
+              for i in {1..30}; do
+                if curl -fsS "${{ secrets.APP_URL }}/api/health" | grep -q '"ok":true'; then
+                  echo "Service healthy"
+                  exit 0
+                fi
+                echo "Waiting... ($i)"
+                sleep 5
+              done
+              echo "Service NOT healthy" && exit 1
