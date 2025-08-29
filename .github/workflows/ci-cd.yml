@@ -74,7 +74,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./DockerFile
+          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta_server.outputs.tags }}
           labels: ${{ steps.meta_server.outputs.labels }}
@@ -108,17 +108,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ส่ง compose + โฟลเดอร์ seed ขึ้นเซิร์ฟเวอร์
-      - name: Copy compose (prod) + db/init
+      - name: Copy compose (prod)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          source: |
-            docker-compose.yml
-            db/init/**
+          source: docker-compose.prod.yml
           target: "~/app"
+
+      - name: Copy db init (if present)
+        if: ${{ hashFiles('db/init/**') != '' }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: db/init/**
+          target: "~/app/db/init"
+
 
       # (ตัวเลือก) สร้างไฟล์ .env บนเครื่องปลายทางจาก Secrets
       - name: Write .env on server (optional)
@@ -167,11 +175,11 @@ jobs:
             cd ~/app
             # ใช้ .env ถ้ามี (มีหรือไม่มีก็ทำงานได้ เพราะ compose ใส่ default ไว้แล้ว)
             if [ -f .env ]; then
-              $DOCKER compose --env-file .env -f docker-compose.prod.yml pull
-              $DOCKER compose --env-file .env -f docker-compose.prod.yml up -d
+              $DOCKER compose --env-file .env -f docker-compose.yml pull
+              $DOCKER compose --env-file .env -f docker-compose.yml up -d
             else
-              $DOCKER compose -f docker-compose.prod.yml pull
-              $DOCKER compose -f docker-compose.prod.yml up -d
+              $DOCKER compose -f docker-compose.yml pull
+              $DOCKER compose -f docker-compose.yml up -d
             fi
 
             $DOCKER image prune -f
