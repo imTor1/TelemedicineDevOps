@@ -1,26 +1,47 @@
-name: test-ssh-local
-on: { workflow_dispatch: {} }
+name: test-ssh-remote
+on:
+  workflow_dispatch:
 
 jobs:
   test-ssh:
-    runs-on: [self-hosted]
+    # ถ้าใช้ GitHub-hosted ให้เป็น ubuntu-latest
+    # ถ้าใช้ VM หลัง NAT แล้วต้องชี้ 127.0.0.1:2222 ให้ใช้ self-hosted
+    runs-on: ubuntu-latest
     env:
-      SSH_HOST: "127.0.0.1"
-      SSH_USER: "tor"
-      SSH_PORT: "2222" 
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+
     steps:
-      - name: Prepare key
+      - name: Prepare SSH key (handle CRLF) 
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          # เอา \r ออกกันปัญหา CRLF ใน secret แล้วเซฟเป็น id_ed25519
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keygen -lf ~/.ssh/id_ed25519
+          ssh-keygen -lf ~/.ssh/id_ed25519 || true
 
-      - name: Trust localhost
+      - name: Test via OpenSSH (เหมือนต่อจากเทอร์มินัล)
         run: |
-          ssh-keyscan -T 5 -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          ssh -p "${SSH_PORT:-22}" \
+              -i ~/.ssh/id_ed25519 \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=10 \
+              -o ServerAliveCountMax=3 \
+              "$SSH_USER@$SSH_HOST" \
+              "echo ✅ OpenSSH OK; whoami; hostname; ip -4 addr | grep -m1 'inet ' || true"
 
-      - name: Test via OpenSSH
-        run: |
-          ssh -p "$SSH_PORT" -i ~/.ssh/id_ed25519 "$SSH_USER@$SSH_HOST" \
-            "echo ✅ OpenSSH OK; whoami; hostname; uptime"
+      # (ตัวเลือก) ใช้ action สำเร็จรูปด้วยพารามิเตอร์เดียวกัน
+      - name: Test via appleboy/ssh-action
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          port: ${{ env.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "✅ appleboy OK"
+            whoami
+            hostname
+            ip -4 addr | grep -m1 'inet ' || true
