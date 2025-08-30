@@ -1,11 +1,9 @@
-name: test-ssh-remote
+name: test-ssh
 on:
   workflow_dispatch:
 
 jobs:
   test-ssh:
-    # ถ้าใช้ GitHub-hosted ให้เป็น ubuntu-latest
-    # ถ้าใช้ VM หลัง NAT แล้วต้องชี้ 127.0.0.1:2222 ให้ใช้ self-hosted
     runs-on: ubuntu-latest
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -13,27 +11,40 @@ jobs:
       SSH_PORT: ${{ secrets.SSH_PORT }}
 
     steps:
-      - name: Prepare SSH key (handle CRLF) 
+      - name: Prepare SSH key (handle CRLF) & show fingerprint
+        shell: bash
         run: |
+          set -e
           mkdir -p ~/.ssh
-          # เอา \r ออกกันปัญหา CRLF ใน secret แล้วเซฟเป็น id_ed25519
+          # กัน \r จาก Windows ที่อาจทำคีย์เพี้ยน
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          echo "🔑 Private key fingerprint:"
           ssh-keygen -lf ~/.ssh/id_ed25519 || true
 
-      - name: Test via OpenSSH (เหมือนต่อจากเทอร์มินัล)
+      - name: Best-effort known_hosts (optional)
+        shell: bash
         run: |
-          ssh -p "${SSH_PORT:-22}" \
-              -i ~/.ssh/id_ed25519 \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ServerAliveInterval=10 \
-              -o ServerAliveCountMax=3 \
-              "$SSH_USER@$SSH_HOST" \
-              "echo ✅ OpenSSH OK; whoami; hostname; ip -4 addr | grep -m1 'inet ' || true"
+          for i in {1..6}; do
+            ssh-keyscan -T 5 -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts && break || sleep 3
+          done || true
 
-      # (ตัวเลือก) ใช้ action สำเร็จรูปด้วยพารามิเตอร์เดียวกัน
-      - name: Test via appleboy/ssh-action
+      - name: Test via OpenSSH (เหมือนต่อจากเทอร์มินัล)
+        shell: bash
+        run: |
+          set -x
+          ssh -vvv \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=10 \
+            -o ServerAliveCountMax=3 \
+            -p "${SSH_PORT:-22}" \
+            -i ~/.ssh/id_ed25519 \
+            "$SSH_USER@$SSH_HOST" \
+            "echo '✅ OpenSSH OK'; whoami; hostname; uptime"
+
+      - name: Test via appleboy/ssh-action (ทางเลือก)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ env.SSH_HOST }}
@@ -44,4 +55,4 @@ jobs:
             echo "✅ appleboy OK"
             whoami
             hostname
-            ip -4 addr | grep -m1 'inet ' || true
+            uptime
