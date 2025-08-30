@@ -1,40 +1,26 @@
-name: Test SSH
-on:
-  workflow_dispatch:
+name: test-ssh-local
+on: { workflow_dispatch: {} }
 
 jobs:
   test-ssh:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     env:
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
-      SSH_PORT: ${{ secrets.SSH_PORT }}
-
+      SSH_HOST: "127.0.0.1"
+      SSH_USER: "tor"
+      SSH_PORT: "2222" 
     steps:
-      - name: Prepare key & known_hosts
+      - name: Prepare key
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # บันทึกลายนิ้วมือไว้ดูใน logs (ไม่เปิดเผยตัวคีย์)
           ssh-keygen -lf ~/.ssh/id_ed25519
-          # ดึง host key เพื่อป้องกันถาม yes/no ตอนเชื่อมต่อ
-          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      - name: Test via OpenSSH (direct)
+      - name: Trust localhost
         run: |
-          ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
-            "$SSH_USER@$SSH_HOST" "echo 
+          ssh-keyscan -T 5 -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      - name: Test via appleboy/ssh-action
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ env.SSH_HOST }}
-          username: ${{ env.SSH_USER }}
-          port: ${{ env.SSH_PORT }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            echo "✅ appleboy OK"
-            whoami
-            hostname
-            uptime
+      - name: Test via OpenSSH
+        run: |
+          ssh -p "$SSH_PORT" -i ~/.ssh/id_ed25519 "$SSH_USER@$SSH_HOST" \
+            "echo ✅ OpenSSH OK; whoami; hostname; uptime"
