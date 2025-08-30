@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   server:
-    image: ghcr.io/imtor1/telemedicinedevops-server:sha-a4fb9d7
+    image: ghcr.io/imtor1/telemedicinedevops-server:main
     depends_on: { db: { condition: service_healthy } }
     environment:
       NODE_ENV: production
@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/imtor1/telemedicinedevops-server:sha-a4fb9d7
+    image: ghcr.io/imtor1/telemedicinedevops-server:main
     depends_on: { server: { condition: service_healthy } }
     ports: ["80:80"]
     restart: unless-stopped
