@@ -38,9 +38,44 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/imtor1/telemedicinedevops-server:main
+    image: ghcr.io/imtor1/telemedicinedevops-web:main
     depends_on: { server: { condition: service_healthy } }
     ports: ["80:80"]
+    restart: unless-stopped
+
+
+    # ------------------ Monitoring ------------------
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  node_exporter:
+    image: prom/node-exporter
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+
+  mysqld_exporter:
+    image: prom/mysqld-exporter
+    environment:
+      DATA_SOURCE_NAME: "medicare_user:${MYSQL_PASSWORD:-1234}@tcp(db:3307)/"
+    ports:
+      - "9104:9104"
+    depends_on:
+      - db
     restart: unless-stopped
 
 volumes:
