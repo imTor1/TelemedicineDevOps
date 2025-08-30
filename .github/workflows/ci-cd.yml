@@ -108,91 +108,242 @@ jobs:
           cache-to: type=gha,mode=max
 
 
-  deploy-local:
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      needs: docker
-      runs-on: [self-hosted]
-      permissions:
-        contents: read
-        packages: read
-      defaults:
-          run:
-            shell: pwsh  
-      steps:
-        - uses: actions/checkout@v4
+  # deploy-local:
+  #     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #     needs: docker
+  #     runs-on: [self-hosted]
+  #     permissions:
+  #       contents: read
+  #       packages: read
+  #     defaults:
+  #         run:
+  #           shell: pwsh  
+  #     steps:
+  #       - uses: actions/checkout@v4
 
-        - name: Lowercase repo again for this job
-          run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+  #       - name: Lowercase repo again for this job
+  #         run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
-        - name: Create .env.prod from Secrets
-          shell: bash
-          run: |
-            cat > .env.prod <<'EOF'
-            # ---- dynamic from workflow ----
-            REPO_LC=${{ env.REPO_LC }}
-            IMAGE_TAG=main
+  #       - name: Create .env.prod from Secrets
+  #         shell: bash
+  #         run: |
+  #           cat > .env.prod <<'EOF'
+  #           # ---- dynamic from workflow ----
+  #           REPO_LC=${{ env.REPO_LC }}
+  #           IMAGE_TAG=main
 
-            # ---- App ----
-            NODE_ENV=production
-            PORT=4005
+  #           # ---- App ----
+  #           NODE_ENV=production
+  #           PORT=4005
 
 
-            # ---- DB ----
-            DB_HOST=db
-            DB_PORT=3306
-            DB_USER=${{ secrets.MYSQL_USER }}
-            DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
-            DB_NAME=${{ secrets.MYSQL_DATABASE }}
+  #           # ---- DB ----
+  #           DB_HOST=db
+  #           DB_PORT=3306
+  #           DB_USER=${{ secrets.MYSQL_USER }}
+  #           DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+  #           DB_NAME=${{ secrets.MYSQL_DATABASE }}
 
-            # ---- MySQL init ----
-            MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
-            MYSQL_USER=${{ secrets.MYSQL_USER }}
-            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
-            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
-            EOF
+  #           # ---- MySQL init ----
+  #           MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+  #           MYSQL_USER=${{ secrets.MYSQL_USER }}
+  #           MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+  #           MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+  #           EOF
 
-        - name: Login GHCR (read)
-          run: echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+  #       - name: Login GHCR (read)
+  #         run: echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-        - name: Doctor docker
-          run: |
-            docker version
-            docker compose version
+  #       - name: Doctor docker
+  #         run: |
+  #           docker version
+  #           docker compose version
 
-        - name: Pull & Up
-          run: |
-            docker compose --env-file .env.prod -f docker-compose.prod.yml pull
-            docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans
-            docker image prune -f
+  #       - name: Pull & Up
+  #         run: |
+  #           docker compose --env-file .env.prod -f docker-compose.prod.yml pull
+  #           docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans
+  #           docker image prune -f
 
-        - name: Smoke test API
-          shell: bash
-          run: |
-            for i in {1..30}; do
-              if curl -fsS http://localhost:4005/api/health | grep -q '"ok":true'; then
-                echo "API healthy"; exit 0
-              fi
-              echo "wait API... ($i)"; sleep 3
-            done
-            echo "API NOT healthy"; exit 1
+  #       - name: Smoke test API
+  #         shell: bash
+  #         run: |
+  #           for i in {1..30}; do
+  #             if curl -fsS http://localhost:4005/api/health | grep -q '"ok":true'; then
+  #               echo "API healthy"; exit 0
+  #             fi
+  #             echo "wait API... ($i)"; sleep 3
+  #           done
+  #           echo "API NOT healthy"; exit 1
 
-        - name: Smoke test Web
-          shell: bash
-          run: |
-            for i in {1..30}; do
-              code=$(curl -s -L -o /dev/null -w "%{http_code}" http://localhost:8080/)
-              if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
-                echo "Web up ($code)"; exit 0
-              fi
-              echo "wait Web... ($i)"; sleep 3
-            done
-            echo "Web NOT up"; exit 1
+  #       - name: Smoke test Web
+  #         shell: bash
+  #         run: |
+  #           for i in {1..30}; do
+  #             code=$(curl -s -L -o /dev/null -w "%{http_code}" http://localhost:8080/)
+  #             if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+  #               echo "Web up ($code)"; exit 0
+  #             fi
+  #             echo "wait Web... ($i)"; sleep 3
+  #           done
+  #           echo "Web NOT up"; exit 1
 
-        - name: Compose logs (on failure)
-          if: failure()
-          run: |
-            docker compose -f docker-compose.prod.yml ps
-            docker compose -f docker-compose.prod.yml logs --tail=200
+  #       - name: Compose logs (on failure)
+  #         if: failure()
+  #         run: |
+  #           docker compose -f docker-compose.prod.yml ps
+  #           docker compose -f docker-compose.prod.yml logs --tail=200
+
+
+
+    # ---------- Deploy to remote server via SSH + Docker Compose ----------
+# deploy:
+#   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#   needs: docker
+#   runs-on: ubuntu-latest
+#   steps:
+#     - uses: actions/checkout@v4
+
+#     # แปลงชื่อ owner/repo ให้เป็นตัวพิมพ์เล็กเพื่อใช้ตั้งชื่อ image
+#     - name: Lowercase repo
+#       run: echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+#     # อัปโหลดไฟล์ compose ไปไว้ที่โฟลเดอร์ ~/app บนเซิร์ฟเวอร์
+#     - name: Copy docker-compose.prod.yml
+#       uses: appleboy/scp-action@v0.1.7
+#       with:
+#         host: ${{ secrets.SSH_HOST }}
+#         username: ${{ secrets.SSH_USER }}
+#         port: ${{ secrets.SSH_PORT || '22' }}
+#         key: ${{ secrets.SSH_PRIVATE_KEY }}
+#         source: "docker-compose.prod.yml"
+#         target: "~/app"
+
+#     # (ถ้ามีสคริปต์ init DB ให้ก็อปไปด้วย)
+#     - name: Copy db init (optional)
+#       if: ${{ hashFiles('db/init/**') != '' }}
+#       uses: appleboy/scp-action@v0.1.7
+#       with:
+#         host: ${{ secrets.SSH_HOST }}
+#         username: ${{ secrets.SSH_USER }}
+#         port: ${{ secrets.SSH_PORT || '22' }}
+#         key: ${{ secrets.SSH_PRIVATE_KEY }}
+#         source: "db/init/**"
+#         target: "~/app/db/init"
+
+#     # เขียนไฟล์ .env.prod บนเซิร์ฟเวอร์จาก Secrets
+#     - name: Write .env.prod on server
+#       uses: appleboy/ssh-action@v1.2.0
+#       env:
+#         REPO_LC: ${{ env.REPO_LC }}
+#         IMAGE_TAG: main
+#         MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+#         MYSQL_USER: ${{ secrets.MYSQL_USER }}
+#         MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+#         MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+#       with:
+#         host: ${{ secrets.SSH_HOST }}
+#         username: ${{ secrets.SSH_USER }}
+#         port: ${{ secrets.SSH_PORT || '22' }}
+#         key: ${{ secrets.SSH_PRIVATE_KEY }}
+#         script: |
+#           set -euo pipefail
+#           mkdir -p ~/app
+#           cat > ~/app/.env.prod <<EOF
+#           # dynamic
+#           REPO_LC=${REPO_LC}
+#           IMAGE_TAG=${IMAGE_TAG}
+
+#           # App
+#           NODE_ENV=production
+#           PORT=4005
+
+#           # DB (app)
+#           DB_HOST=db
+#           DB_PORT=3306
+#           DB_USER=${MYSQL_USER}
+#           DB_PASSWORD=${MYSQL_PASSWORD}
+#           DB_NAME=${MYSQL_DATABASE}
+
+#           # MySQL init (db container)
+#           MYSQL_DATABASE=${MYSQL_DATABASE}
+#           MYSQL_USER=${MYSQL_USER}
+#           MYSQL_PASSWORD=${MYSQL_PASSWORD}
+#           MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+#           EOF
+
+#     # ติดตั้ง Docker/Compose (ถ้ายังไม่มี) + Login GHCR (ถ้าจำเป็น) + Deploy
+#     - name: Deploy on server
+#       uses: appleboy/ssh-action@v1.2.0
+#       env:
+#         GHCR_PAT: ${{ secrets.GHCR_PAT }}            # optional
+#         GITHUB_ACTOR: ${{ github.actor }}
+#       with:
+#         host: ${{ secrets.SSH_HOST }}
+#         username: ${{ secrets.SSH_USER }}
+#         port: ${{ secrets.SSH_PORT || '22' }}
+#         key: ${{ secrets.SSH_PRIVATE_KEY }}
+#         script: |
+#           set -euo pipefail
+
+#           # Install Docker Engine + Compose v2 if missing
+#           if ! command -v docker >/dev/null 2>&1; then
+#             sudo apt-get update -y
+#             sudo apt-get install -y ca-certificates curl gnupg lsb-release
+#             sudo install -m 0755 -d /etc/apt/keyrings
+#             curl -fsSL https://download.docker.com/linux/$(. /etc/os-release; echo "$ID")/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+#             echo \
+#               "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(. /etc/os-release; echo "$ID") \
+#               $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+#             sudo apt-get update -y
+#             sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+#             sudo systemctl enable --now docker
+#           fi
+
+#           cd ~/app
+
+#           # Login GHCR ถ้าภาพเป็น private
+#           if [ -n "${GHCR_PAT:-}" ]; then
+#             echo "$GHCR_PAT" | sudo docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+#           fi
+
+#           # Pull แล้ว Up ด้วย .env.prod
+#           sudo docker compose --env-file .env.prod -f docker-compose.prod.yml pull
+#           sudo docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans
+
+#           # เก็บกวาด
+#           sudo docker image prune -f
+
+#     # Smoke test หลัง deploy
+#     - name: Smoke test (API & Web)
+#       uses: appleboy/ssh-action@v1.2.0
+#       with:
+#         host: ${{ secrets.SSH_HOST }}
+#         username: ${{ secrets.SSH_USER }}
+#         port: ${{ secrets.SSH_PORT || '22' }}
+#         key: ${{ secrets.SSH_PRIVATE_KEY }}
+#         script: |
+#           set -e
+#           for i in $(seq 1 30); do
+#             if curl -fsS http://localhost:4005/api/health | grep -q '"ok":true'; then
+#               echo "API healthy"; break
+#             fi
+#             echo "waiting API... ($i)"; sleep 3
+#           done
+
+#           for i in $(seq 1 30); do
+#             code=$(curl -s -L -o /dev/null -w "%{http_code}" http://localhost:8080/)
+#             if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+#               echo "Web up ($code)"; exit 0
+#             fi
+#             echo "waiting Web... ($i)"; sleep 3
+#           done
+
+#           echo "Web NOT up"; exit 1
+
+
+
+
 
   # ---------- Deploy to self-hosted (prod-like on your machine) ----------
   # deploy-local:
@@ -375,3 +526,8 @@ jobs:
   #           echo "Waiting... ($i)"; sleep 5
   #         done
   #         echo "Service NOT healthy"; exit 1
+
+
+
+
+   
