@@ -111,7 +111,7 @@ jobs:
   deploy-local:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/main')
     needs: docker
-    runs-on: [self-hosted, prod]
+    runs-on: self-hosted
     permissions:
       packages: read
     steps:
