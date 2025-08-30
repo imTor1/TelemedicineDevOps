@@ -100,6 +100,72 @@ jobs:
           labels: ${{ steps.meta_web.outputs.labels }}
 
   # ---------- Deploy to EC2 via Docker Compose ----------
+
+  deploy-local:
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/main')
+      needs: docker
+      runs-on: [self-hosted, prod] 
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Create .env.prod from Secrets
+          run: |
+            cat > .env.prod <<'EOF'
+            NODE_ENV=production
+            PORT=4005
+            # --- MySQL ---
+            MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+            MYSQL_USER=${{ secrets.MYSQL_USER }}
+            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+            # --- อื่น ๆ ตามแอปของเรา ---
+            EOF
+
+        - name: Login GHCR (read packages)
+          uses: docker/login-action@v3
+          with:
+            registry: ghcr.io
+            username: ${{ github.actor }}
+            password: ${{ secrets.GHCR_PAT }}  
+
+        - name: Pull & Up (prod-like)
+          run: |
+            set -e
+            docker compose --env-file .env.prod -f docker-compose.prod.yml pull
+            docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans
+            # (ถ้ามี migration) รันในคอนเทนเนอร์แอป:
+            # docker compose exec -T server npm run migrate --if-present
+            docker image prune -f
+
+        # ---------- 5) (Optional) Integration/Smoke Test ----------
+        - name: Smoke test API
+          run: |
+            set -e
+            for i in {1..30}; do
+              if curl -fsS http://localhost:4005/api/health | grep -q '"ok":true'; then
+                echo "API healthy"; exit 0
+              fi
+              echo "wait API... ($i)"; sleep 3
+            done
+            echo "API NOT healthy"; exit 1
+
+        - name: Smoke test Web
+          run: |
+            set -e
+            for i in {1..30}; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080)
+              if [ "$code" = "200" ]; then
+                echo "Web up"; exit 0
+              fi
+              echo "wait Web... ($i)"; sleep 3
+            done
+            echo "Web NOT up"; exit 1
+
+
+
+
+
+
   # deploy:
   #   if: github.event_name == 'push'
   #   needs: docker
