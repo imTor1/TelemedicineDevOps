@@ -111,10 +111,13 @@ jobs:
   deploy-local:
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       needs: docker
-      runs-on: [self-hosted, deploy]      # <== runner บนเครื่องคุณ ต้องมี label 'deploy'
+      runs-on: [self-hosted]
       permissions:
         contents: read
         packages: read
+      defaults:
+          run:
+            shell: pwsh  
       steps:
         - uses: actions/checkout@v4
 
