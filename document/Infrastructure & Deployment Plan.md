@@ -1,7 +1,7 @@
- Infrastructure & Deployment Plan
+## Infrastructure & Deployment Plan
 
 
-1.สถาปัตยกรรมระบบ
+## สถาปัตยกรรมระบบ
 Stack: React (Vite) + Node/Express + MySQL 8 + Prometheus + Grafana
 Runtime: Docker + Docker Compose
 IaC: Terraform (ส่วน  Database)
@@ -11,19 +11,21 @@ Services
 	db (MySQL)
 	node_exporter, mysqld_exporter, prometheus, grafana
 
-2.CI/CD Pipeline Flow
+
+## CI/CD Pipeline Flow
 CI: GitHub Actions → checkout → npm ci/test/build (server & web)
 Build/Push: Docker compose สร้าง image
 Deploy: SSH ไปเครื่องปลายทาง → docker compose pull && up -d → health check API
 Secrets: เก็บใน GitHub Secrets (Database SSH)
 
-3.Environments
+
+## Environments
 Dev (local): docker-compose.dev.yml
 Prod: docker-compose.prod.yml
 แยกไฟล์ compose/ENV, แยกฐานข้อมูล, เปิดพอร์ตเท่าที่จำเป็น
 
 
-4.Monitoring
+## Monitoring
 prometheus + Grafana ใช้เก็บค่าและแสดงสถานะ
-node_exporter: CPU, RAM, Disk, Load, Filesystem, Network
+node_exporter: CPU, Disk, Load
 mysqld_exporter: mysql_up, connections, uptime, buffer pool, threads
