@@ -133,6 +133,7 @@ jobs:
             NODE_ENV=production
             PORT=4005
 
+
             # ---- DB ----
             DB_HOST=db
             DB_PORT=3306
